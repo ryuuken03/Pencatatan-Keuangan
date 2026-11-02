@@ -133,6 +133,29 @@
         : 'bg-indigo-950 hover:bg-indigo-900'
   );
 
+  let pageTitle = $derived(
+    activeWorkspace === 'business'
+      ? 'Buku Usaha — Buku Kas Multi-Workspace'
+      : activeWorkspace === 'kopdes'
+        ? 'Manager Kopdes — Buku Kas Multi-Workspace'
+        : 'Buku Pribadi — Buku Kas Multi-Workspace'
+  );
+
+  let themeColorHex = $derived(
+    activeWorkspace === 'business'
+      ? '#134e4a'
+      : activeWorkspace === 'kopdes'
+        ? '#064e3b'
+        : '#1e1b4b'
+  );
+
+  $effect(() => {
+    const meta = document.getElementById('theme-color-meta');
+    if (meta) {
+      meta.setAttribute('content', themeColorHex);
+    }
+  });
+
   // Handlers CRUD Transaksi
   function openNewTransaction() {
     editingTx = null;
@@ -195,6 +218,10 @@
     await refreshData();
   }
 </script>
+
+<svelte:head>
+  <title>{pageTitle}</title>
+</svelte:head>
 
 <div class="min-h-screen flex flex-col bg-slate-50 text-slate-900">
   {#if !isReady}
