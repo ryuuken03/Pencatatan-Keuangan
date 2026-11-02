@@ -19,6 +19,14 @@
     onOpenReceiptModal,
   } = $props();
 
+  let isWalletDetailOpen = $state(false);
+
+  function getAccountTypeLabel(type) {
+    if (type === "bank") return "Rekening Bank";
+    if (type === "ewallet") return "E-Wallet";
+    return "Kas Tunai";
+  }
+
   const workspaceTabs = [
     {
       id: "personal",
@@ -221,10 +229,32 @@
             {theme.badgeText}
           </span>
         </div>
-        <div
-          class="text-2xl sm:text-3xl font-extrabold tracking-tight tabular-nums mt-1.5"
-        >
-          {formatIDR(summary.totalBalance)}
+        <div class="flex items-end justify-between gap-2 mt-1.5">
+          <div
+            class="text-2xl sm:text-3xl font-extrabold tracking-tight tabular-nums truncate"
+          >
+            {formatIDR(summary.totalBalance)}
+          </div>
+          <button
+            type="button"
+            onclick={() => (isWalletDetailOpen = true)}
+            class="px-2.5 py-1 text-[11px] font-extrabold rounded-xl border {theme.badgeBg} hover:bg-white/15 transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1"
+          >
+            <span>Lihat Detail ({accounts.length})</span>
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+            >
+              <path
+                d="m9 18 6-6-6-6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -321,40 +351,115 @@
         </div>
       </div>
     </div>
-
-    <!-- Baris 3: Mini Wallet Cards (Tanpa Scrollbar Kasar) -->
-    {#if accounts.length > 0}
-      <div
-        class="flex items-center gap-2 overflow-x-auto no-scrollbar pt-2.5 mt-2.5 border-t border-slate-100"
-      >
-        {#each accounts as acc (acc.id)}
-          <button
-            type="button"
-            onclick={onOpenManageModal}
-            class="inline-flex items-center gap-2.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200/90 border-l-4 {theme.walletAccent} rounded-xl shrink-0 transition-colors cursor-pointer text-left"
-          >
-            <div>
-              <div
-                class="text-[10px] font-bold uppercase tracking-wider text-slate-400 leading-none"
-              >
-                {acc.name}
-              </div>
-              <div
-                class="text-xs font-extrabold text-slate-800 tabular-nums mt-1"
-              >
-                {formatIDR(accountBalances[acc.id] ?? 0)}
-              </div>
-            </div>
-          </button>
-        {/each}
-        <button
-          type="button"
-          onclick={onOpenManageModal}
-          class="inline-flex items-center gap-1 px-2.5 py-2 text-[11px] font-bold text-slate-500 hover:text-slate-800 bg-slate-100/70 hover:bg-slate-100 rounded-xl shrink-0 cursor-pointer"
-        >
-          <span>+ Kelola</span>
-        </button>
-      </div>
-    {/if}
   </div>
 </header>
+
+<!-- Modal Detail Rincian Saldo per Dompet -->
+{#if isWalletDetailOpen}
+  <div
+    class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-xs p-0 sm:p-4 overflow-y-auto"
+  >
+    <div
+      class="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+    >
+      <!-- Header Modal -->
+      <div
+        class="flex items-center justify-between px-4 py-3.5 {theme.heroBg} text-white shrink-0"
+      >
+        <div>
+          <span class="block text-[10px] font-extrabold uppercase tracking-wider text-white/75">
+            {theme.badgeText}
+          </span>
+          <h2 class="text-sm font-extrabold tracking-wide uppercase">
+            Rincian Saldo Dompet ({accounts.length})
+          </h2>
+        </div>
+        <button
+          type="button"
+          onclick={() => (isWalletDetailOpen = false)}
+          class="p-1 text-white/70 hover:text-white cursor-pointer"
+          aria-label="Tutup"
+        >
+          <svg
+            class="w-4 h-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+          >
+            <path
+              d="M18 6L6 18M6 6l12 12"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Body Daftar Dompet -->
+      <div class="p-4 space-y-3 overflow-y-auto text-xs sm:text-sm">
+        <!-- Total Saldo Card -->
+        <div class="p-3.5 bg-slate-100 border border-slate-200 rounded-2xl flex items-center justify-between">
+          <span class="text-xs font-extrabold uppercase text-slate-600">
+            Total Saldo Aktif
+          </span>
+          <span class="text-base sm:text-lg font-extrabold tabular-nums text-slate-900">
+            {formatIDR(summary.totalBalance)}
+          </span>
+        </div>
+
+        {#if accounts.length === 0}
+          <div class="p-6 text-center text-slate-400 text-xs bg-slate-50 rounded-2xl border border-slate-200">
+            Belum ada dompet pada buku kas ini.
+          </div>
+        {:else}
+          <div class="space-y-2">
+            {#each accounts as acc (acc.id)}
+              <div
+                class="p-3.5 bg-white border border-slate-200 border-l-4 {theme.walletAccent} rounded-xl shadow-2xs flex items-center justify-between gap-3"
+              >
+                <div class="min-w-0">
+                  <div class="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
+                    {acc.name}
+                  </div>
+                  <span class="inline-block mt-0.5 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold uppercase">
+                    {getAccountTypeLabel(acc.type)}
+                  </span>
+                </div>
+                <div class="text-right shrink-0">
+                  <div class="text-sm sm:text-base font-extrabold tabular-nums text-slate-900">
+                    {formatIDR(accountBalances[acc.id] ?? 0)}
+                  </div>
+                  <div class="text-[10px] text-slate-400 tabular-nums mt-0.5">
+                    Saldo awal: {formatIDR(acc.initial_balance ?? 0)}
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+
+        <!-- Footer Modal -->
+        <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-200">
+          <button
+            type="button"
+            onclick={() => {
+              isWalletDetailOpen = false;
+              onOpenManageModal?.();
+            }}
+            class="px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+          >
+            Kelola Dompet & Kategori
+          </button>
+          <button
+            type="button"
+            onclick={() => (isWalletDetailOpen = false)}
+            class="px-4 py-2 text-xs font-extrabold rounded-xl cursor-pointer {theme.primaryBtn}"
+          >
+            Tutup
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}

@@ -15,6 +15,7 @@
     activeWorkspace = "personal",
     allAccounts = [],
     allCategories = [],
+    allTransactions = [],
     onApply,
     onClose,
   } = $props();
@@ -44,6 +45,7 @@
       activeWorkspace,
       allAccounts,
       allCategories,
+      allTransactions,
     }),
   );
 
@@ -193,14 +195,20 @@
       return;
     }
 
+    const plainSelectedItems = selectedItems.map((it, idx) => ({
+      id: String(it.id || `item-${idx + 1}`),
+      name: String(it.name || ""),
+      amount: Math.round(Number(it.amount) || 0),
+    }));
+
     const payload = {
       ...parsedPreview,
       amount: effectiveAmount,
       note: effectiveNote,
-      items: selectedItems,
+      items: plainSelectedItems,
       metadata: {
         ...parsedPreview.metadata,
-        items: selectedItems,
+        items: plainSelectedItems,
       },
       attachment_blob: skipSavingImage ? null : compressedResult?.blob || null,
     };
@@ -338,7 +346,7 @@
         </div>
 
         <!-- Simulasi Struk Cepat (List Produk vs 1 Total) -->
-        <div>
+        <!-- <div>
           <span
             class="block text-[11px] font-bold uppercase text-slate-500 mb-1"
           >
@@ -355,7 +363,7 @@
               </button>
             {/each}
           </div>
-        </div>
+        </div> -->
 
         <!-- Opsi Optimasi Memori & Storage (PRD 4.2) -->
         <div
@@ -382,10 +390,10 @@
               <span class="text-xs font-extrabold text-slate-900 block">
                 Hanya ambil teks, jangan simpan gambar
               </span>
-              <span class="text-[10px] text-slate-500 block">
+              <!-- <span class="text-[10px] text-slate-500 block">
                 Opsi hemat ekstrem: ekstrak angka & tanggal ke form tanpa
                 menyimpan foto struk di database.
-              </span>
+              </span> -->
             </div>
             <input
               type="checkbox"
@@ -413,16 +421,16 @@
                 class="sm:col-span-5 bg-slate-100 border border-slate-200 rounded-2xl p-2.5 flex flex-col items-center"
               >
                 <div class="w-full flex items-center justify-between mb-1.5">
-                  <span
+                  <!-- <span
                     class="px-2 py-0.5 bg-emerald-700 text-white rounded-md text-[10px] font-extrabold tabular-nums"
                   >
                     WebP • {compressedResult.sizeKB} KB
-                  </span>
-                  <span
+                  </span> -->
+                  <!-- <span
                     class="text-[10px] font-semibold text-slate-500 tabular-nums"
                   >
                     {compressedResult.width}×{compressedResult.height}px
-                  </span>
+                  </span> -->
                 </div>
                 <img
                   src={previewUrl}
@@ -432,14 +440,14 @@
                 <div
                   class="w-full flex items-center justify-between mt-1.5 text-[10px] text-slate-500"
                 >
-                  <span>Asal: {compressedResult.originalSizeKB} KB</span>
+                  <!-- <span>Asal: {compressedResult.originalSizeKB} KB</span>
                   {#if skipSavingImage}
                     <span class="text-amber-700 font-bold">Tidak Disimpan</span>
                   {:else}
                     <span class="text-emerald-700 font-bold"
                       >✓ &lt; 80 KB Aman</span
                     >
-                  {/if}
+                  {/if} -->
                 </div>
               </div>
             {/if}
@@ -451,9 +459,12 @@
                 : 'sm:col-span-12'} space-y-2"
             >
               <div class="flex items-center justify-between">
-                <span class="text-[11px] font-extrabold uppercase text-slate-600">
+                <span
+                  class="text-[11px] font-extrabold uppercase text-slate-600"
+                >
                   {#if (parsedPreview.items?.length || 0) > 0}
-                    Daftar Produk Terdeteksi ({selectedItems.length}/{parsedPreview.items.length})
+                    Daftar Produk Terdeteksi ({selectedItems.length}/{parsedPreview
+                      .items.length})
                   {:else}
                     Ringkasan Nota (1 Total)
                   {/if}
@@ -481,8 +492,12 @@
 
               {#if (parsedPreview.items?.length || 0) > 0}
                 <!-- MODE 1: ADA LIST PRODUK (Checklist Interaktif + Baris Total) -->
-                <div class="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden">
-                  <div class="divide-y divide-slate-200/80 max-h-44 overflow-y-auto">
+                <div
+                  class="bg-slate-50 border border-slate-200 rounded-2xl overflow-hidden"
+                >
+                  <div
+                    class="divide-y divide-slate-200/80 max-h-44 overflow-y-auto"
+                  >
                     {#each parsedPreview.items as item (item.id)}
                       {@const isChecked = selectedItemIds.includes(item.id)}
                       <label
@@ -517,31 +532,49 @@
                   </div>
 
                   <!-- Footer Total dari List Produk -->
-                  <div class="px-3 py-2 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
-                    <span class="text-[11px] font-extrabold uppercase text-slate-600">
+                  <div
+                    class="px-3 py-2 bg-slate-100 border-t border-slate-200 flex items-center justify-between"
+                  >
+                    <span
+                      class="text-[11px] font-extrabold uppercase text-slate-600"
+                    >
                       Total Dipilih ({selectedItems.length} item)
                     </span>
-                    <span class="text-sm font-extrabold tabular-nums text-emerald-800">
+                    <span
+                      class="text-sm font-extrabold tabular-nums text-emerald-800"
+                    >
                       {formatIDR(effectiveAmount)}
                     </span>
                   </div>
                 </div>
               {:else}
                 <!-- MODE 2: HANYA 1 TOTAL (Tanpa Rincian Produk / Kwitansi Tunggal) -->
-                <div class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col justify-between space-y-2">
+                <div
+                  class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col justify-between space-y-2"
+                >
                   <div>
-                    <span class="text-[10px] font-bold uppercase text-slate-400 block">
+                    <span
+                      class="text-[10px] font-bold uppercase text-slate-400 block"
+                    >
                       Toko / Penerbit Nota
                     </span>
-                    <span class="text-xs font-extrabold text-slate-800 block mt-0.5">
+                    <span
+                      class="text-xs font-extrabold text-slate-800 block mt-0.5"
+                    >
                       {parsedPreview.merchant || "Nota Tanpa Rincian Produk"}
                     </span>
                   </div>
-                  <div class="pt-2 border-t border-slate-200/80 flex items-baseline justify-between">
-                    <span class="text-[11px] font-extrabold uppercase text-slate-500">
+                  <div
+                    class="pt-2 border-t border-slate-200/80 flex items-baseline justify-between"
+                  >
+                    <span
+                      class="text-[11px] font-extrabold uppercase text-slate-500"
+                    >
                       Nominal Total
                     </span>
-                    <span class="text-lg font-extrabold tabular-nums text-emerald-800">
+                    <span
+                      class="text-lg font-extrabold tabular-nums text-emerald-800"
+                    >
                       {formatIDR(effectiveAmount)}
                     </span>
                   </div>
@@ -557,8 +590,8 @@
                     class="text-[11px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
                   >
                     {showRawOcr
-                      ? "Sembunyikan Teks Asli OCR ▲"
-                      : `Lihat Teks Asli OCR (${ocrEngineName || "Scanner"}) ▼`}
+                      ? "Sembunyikan Teks Asli▲"
+                      : `Lihat Teks Asli ▼`}
                   </button>
                   {#if showRawOcr}
                     <textarea
@@ -574,13 +607,16 @@
           </div>
         {:else}
           <!-- State Kosong Sebelum Pilih Foto / Simulasi -->
-          <div class="p-4 bg-slate-50 border border-dashed border-slate-300 rounded-2xl text-center">
+          <div
+            class="p-4 bg-slate-50 border border-dashed border-slate-300 rounded-2xl text-center"
+          >
             <p class="text-xs font-bold text-slate-600">
               Belum ada struk yang dipindai
             </p>
-            <p class="text-[11px] text-slate-400 mt-0.5">
-              Ambil foto dari Kamera/Galeri atau klik salah satu tombol Simulasi Struk di atas.
-            </p>
+            <!-- <p class="text-[11px] text-slate-400 mt-0.5">
+              Ambil foto dari Kamera/Galeri atau klik salah satu tombol Simulasi
+              Struk di atas.
+            </p> -->
           </div>
         {/if}
 
@@ -594,12 +630,12 @@
             <span
               class="text-[11px] font-extrabold uppercase tracking-wider text-slate-500"
             >
-              Ringkasan Data ke Form Verifikasi
+              Ringkasan Data
             </span>
             <span
               class="text-[11px] font-extrabold tabular-nums text-emerald-800"
             >
-              {effectiveAmount > 0 ? "✓ Siap Diisi ke Form" : "Menunggu Struk"}
+              {effectiveAmount > 0 ? "✓" : ""}
             </span>
           </div>
 
@@ -670,7 +706,9 @@
 
           {#if effectiveNote && (compressedResult || rawReceiptText)}
             <div class="pt-1.5 border-t border-slate-200/80">
-              <span class="text-[10px] font-bold uppercase text-slate-400 block">
+              <span
+                class="text-[10px] font-bold uppercase text-slate-400 block"
+              >
                 Catatan Otomatis
               </span>
               <span class="text-xs font-semibold text-slate-800">
@@ -696,7 +734,7 @@
             onclick={handleConfirm}
             class="px-4 py-2 text-xs font-extrabold text-white rounded-xl cursor-pointer {headerBgCls}"
           >
-            Isi ke Form Verifikasi →
+            Isi ke Form →
           </button>
         </div>
       </div>

@@ -28,6 +28,7 @@
   let editingCatId = $state(null);
   let catName = $state("");
   let catType = $state("expense");
+  let catKeywords = $state("");
 
   const workspaceLabel = $derived(
     activeWorkspace === "personal"
@@ -84,12 +85,14 @@
     editingCatId = null;
     catName = "";
     catType = "expense";
+    catKeywords = "";
   }
 
   function startEditCat(cat) {
     editingCatId = cat.id;
     catName = cat.name;
     catType = cat.type;
+    catKeywords = cat.keywords || "";
   }
 
   async function handleCatSubmit(e) {
@@ -100,6 +103,7 @@
       workspace_id: activeWorkspace,
       name: catName.trim(),
       type: catType,
+      keywords: catKeywords.trim(),
     });
     resetCatForm();
   }
@@ -354,7 +358,7 @@
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <input
                 type="text"
-                placeholder="Nama Kategori"
+                placeholder="Nama Kategori (misal: Jajan & Kafe)"
                 bind:value={catName}
                 required
                 class="sm:col-span-2 px-3 py-1.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-slate-900"
@@ -366,6 +370,14 @@
                 <option value="expense">Pengeluaran</option>
                 <option value="income">Pemasukan</option>
               </select>
+            </div>
+            <div>
+              <input
+                type="text"
+                placeholder="Kata Kunci OCR/Suara Opsional (pisahkan koma, misal: kopi, mie, es teler, dairy)"
+                bind:value={catKeywords}
+                class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-[11px] focus:outline-none focus:border-slate-900"
+              />
             </div>
             <div class="flex items-center justify-end gap-2">
               {#if editingCatId}
@@ -398,9 +410,14 @@
               <div class="divide-y divide-slate-200/70">
                 {#each categories.filter((c) => c.type === "expense") as cat (cat.id)}
                   <div
-                    class="flex items-center justify-between px-3 py-2 hover:bg-slate-50"
+                    class="flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50"
                   >
-                    <span class="font-semibold text-slate-800">{cat.name}</span>
+                    <div class="min-w-0">
+                      <span class="font-semibold text-slate-800 block truncate">{cat.name}</span>
+                      {#if cat.keywords}
+                        <span class="text-[10px] text-slate-400 block truncate">Kata kunci: {cat.keywords}</span>
+                      {/if}
+                    </div>
                     <div class="flex items-center gap-2.5 shrink-0">
                       <button
                         type="button"
@@ -432,9 +449,14 @@
               <div class="divide-y divide-slate-200/70">
                 {#each categories.filter((c) => c.type === "income") as cat (cat.id)}
                   <div
-                    class="flex items-center justify-between px-3 py-2 hover:bg-slate-50"
+                    class="flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-50"
                   >
-                    <span class="font-semibold text-slate-800">{cat.name}</span>
+                    <div class="min-w-0">
+                      <span class="font-semibold text-slate-800 block truncate">{cat.name}</span>
+                      {#if cat.keywords}
+                        <span class="text-[10px] text-slate-400 block truncate">Kata kunci: {cat.keywords}</span>
+                      {/if}
+                    </div>
                     <div class="flex items-center gap-2.5 shrink-0">
                       <button
                         type="button"

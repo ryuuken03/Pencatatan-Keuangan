@@ -11,6 +11,52 @@ db.version(1).stores({
   transactions: 'id, workspace_id, account_id, to_account_id, category_id, type, date, created_at, updated_at, deleted_at, sync_status'
 });
 
+// Versi 2: Tabel terpisah `transaction_items` (Opsional 0..N item per transaksi)
+db.version(2)
+  .stores({
+    workspaces: 'id, name, currency',
+    accounts: 'id, workspace_id, name, type, updated_at, deleted_at, sync_status',
+    categories: 'id, workspace_id, name, type, updated_at, deleted_at, sync_status',
+    transactions: 'id, workspace_id, account_id, to_account_id, category_id, type, date, created_at, updated_at, deleted_at, sync_status',
+    transaction_items: 'id, transaction_id, workspace_id, name, sort_order, updated_at, deleted_at, sync_status'
+  })
+  .upgrade(async (trans) => {
+    const txs = await trans.table('transactions').toArray();
+    const now = new Date().toISOString();
+    const itemsToInsert = [];
+
+    for (const tx of txs) {
+      if (Array.isArray(tx.metadata?.items) && tx.metadata.items.length > 0) {
+        tx.metadata.items.forEach((it, idx) => {
+          const name = String(it?.name || '').trim();
+          const amount = Math.round(Number(it?.amount) || 0);
+          if (name || amount > 0) {
+            itemsToInsert.push({
+              id: uuidv7(),
+              transaction_id: String(tx.id),
+              workspace_id: String(tx.workspace_id || 'personal'),
+              name: name || `Item ${idx + 1}`,
+              amount,
+              sort_order: idx,
+              created_at: String(tx.created_at || now),
+              updated_at: now,
+              deleted_at: tx.deleted_at || null,
+              sync_status: 'pending'
+            });
+          }
+        });
+
+        const cleanMeta = { ...tx.metadata };
+        delete cleanMeta.items;
+        await trans.table('transactions').update(tx.id, { metadata: cleanMeta });
+      }
+    }
+
+    if (itemsToInsert.length > 0) {
+      await trans.table('transaction_items').bulkPut(itemsToInsert);
+    }
+  });
+
 export const KOPDES_UNITS = [
   'Unit Simpan Pinjam (USP)',
   'Unit Toko/Ritel',
@@ -101,15 +147,30 @@ export async function seedDatabase() {
 }
 
 /**
- * Helper ambil semua data aktif (deleted_at === null)
+ * Helper ambil semua data aktif (deleted_at === null) beserta relasi opsional `transaction_items`
  */
 export async function loadAppData() {
-  const [workspaces, allAccounts, allCategories, allTransactions] = await Promise.all([
+  const [workspaces, allAccounts, allCategories, allTransactions, allTxItems] = await Promise.all([
     db.workspaces.toArray(),
     db.accounts.filter((a) => !a.deleted_at).toArray(),
     db.categories.filter((c) => !c.deleted_at).toArray(),
-    db.transactions.filter((t) => !t.deleted_at).toArray()
+    db.transactions.filter((t) => !t.deleted_at).toArray(),
+    db.transaction_items.filter((it) => !it.deleted_at).toArray()
   ]);
+
+  // Kelompokkan item produk berdasarkan transaction_id
+  allTxItems.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+  const itemsByTxId = {};
+  for (const item of allTxItems) {
+    if (!itemsByTxId[item.transaction_id]) {
+      itemsByTxId[item.transaction_id] = [];
+    }
+    itemsByTxId[item.transaction_id].push(item);
+  }
+
+  for (const tx of allTransactions) {
+    tx.items = itemsByTxId[tx.id] || [];
+  }
 
   // Urutkan transaksi dari terbaru ke terlama
   allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -118,7 +179,8 @@ export async function loadAppData() {
     workspaces,
     accounts: allAccounts,
     categories: allCategories,
-    transactions: allTransactions
+    transactions: allTransactions,
+    transactionItems: allTxItems
   };
 }
 
@@ -183,47 +245,133 @@ export function computeAccountBalances(accounts, transactions) {
 }
 
 /**
- * CRUD Transaksi
+ * CRUD Transaksi + Tabel Opsional `transaction_items` (0..N item produk)
  */
 export async function saveTransaction(txData) {
   const now = new Date().toISOString();
   const isNew = !txData.id;
+  const txId = String(txData.id || uuidv7());
+  const wsId = String(txData.workspace_id || 'personal');
+
+  const rawItems = Array.isArray(txData.items)
+    ? txData.items
+    : Array.isArray(txData.metadata?.items)
+      ? txData.metadata.items
+      : [];
+
+  const validItems = rawItems
+    .map((it, idx) => ({
+      id: it?.id && String(it.id).length > 10 ? String(it.id) : uuidv7(),
+      transaction_id: txId,
+      workspace_id: wsId,
+      name: String(it?.name || '').trim(),
+      amount: Math.round(Number(it?.amount) || 0),
+      sort_order: idx,
+      created_at: String(it?.created_at || now),
+      updated_at: now,
+      deleted_at: null,
+      sync_status: 'pending'
+    }))
+    .filter((it) => it.name !== '' || it.amount > 0)
+    .map((it, idx) => ({
+      ...it,
+      name: it.name || `Produk ${idx + 1}`,
+      sort_order: idx
+    }));
+
+  const rawBlob = txData.attachment_blob;
+  const safeBlob =
+    rawBlob instanceof Blob
+      ? new Blob([rawBlob], { type: rawBlob.type || 'image/webp' })
+      : null;
+
   const record = {
-    id: txData.id || uuidv7(),
-    workspace_id: txData.workspace_id,
-    account_id: txData.account_id,
-    to_account_id: txData.type === 'transfer' ? txData.to_account_id : null,
-    category_id: txData.type === 'transfer' ? null : txData.category_id,
-    type: txData.type,
+    id: txId,
+    workspace_id: wsId,
+    account_id: String(txData.account_id || ''),
+    to_account_id: txData.type === 'transfer' && txData.to_account_id ? String(txData.to_account_id) : null,
+    category_id: txData.type === 'transfer' || !txData.category_id ? null : String(txData.category_id),
+    type: String(txData.type || 'expense'),
     amount: Math.round(Number(txData.amount) || 0),
-    date: txData.date || now,
-    note: (txData.note || '').trim(),
+    date: String(txData.date || now),
+    note: String(txData.note || '').trim(),
     metadata: {
-      no_bukti: txData.metadata?.no_bukti || '',
-      unit_usaha: txData.metadata?.unit_usaha || '',
-      pic_pihak: txData.metadata?.pic_pihak || '',
-      items: Array.isArray(txData.metadata?.items) ? txData.metadata.items : [],
-      reimburse_status: txData.metadata?.reimburse_status || 'none',
-      reimburse_from_account_id: txData.metadata?.reimburse_from_account_id || null,
-      reimburse_settled_at: txData.metadata?.reimburse_settled_at || null
+      no_bukti: String(txData.metadata?.no_bukti || ''),
+      unit_usaha: String(txData.metadata?.unit_usaha || ''),
+      pic_pihak: String(txData.metadata?.pic_pihak || ''),
+      reimburse_status: String(txData.metadata?.reimburse_status || 'none'),
+      reimburse_from_account_id: txData.metadata?.reimburse_from_account_id
+        ? String(txData.metadata.reimburse_from_account_id)
+        : null,
+      reimburse_settled_at: txData.metadata?.reimburse_settled_at
+        ? String(txData.metadata.reimburse_settled_at)
+        : null
     },
-    attachment_blob: txData.attachment_blob || null,
-    created_at: isNew ? now : (txData.created_at || now),
+    attachment_blob: safeBlob,
+    created_at: String(isNew ? now : (txData.created_at || now)),
     updated_at: now,
     deleted_at: null,
     sync_status: 'pending'
   };
 
-  await db.transactions.put(record);
-  return record;
+  await db.transaction('rw', db.transactions, db.transaction_items, async () => {
+    await db.transactions.put(record);
+
+    // Ambil item lama dari transaksi ini (jika edit transaksi)
+    const existingItems = await db.transaction_items
+      .where('transaction_id')
+      .equals(txId)
+      .toArray();
+
+    const keptIds = new Set(validItems.map((it) => it.id));
+    const toSoftDelete = existingItems
+      .filter((oldIt) => !oldIt.deleted_at && !keptIds.has(oldIt.id))
+      .map((oldIt) => ({
+        ...oldIt,
+        deleted_at: now,
+        updated_at: now,
+        sync_status: 'pending'
+      }));
+
+    if (toSoftDelete.length > 0) {
+      await db.transaction_items.bulkPut(toSoftDelete);
+    }
+
+    if (validItems.length > 0) {
+      await db.transaction_items.bulkPut(validItems);
+    }
+  });
+
+  return {
+    ...record,
+    items: validItems
+  };
 }
 
 export async function softDeleteTransaction(id) {
   const now = new Date().toISOString();
-  await db.transactions.update(id, {
-    deleted_at: now,
-    updated_at: now,
-    sync_status: 'pending'
+  await db.transaction('rw', db.transactions, db.transaction_items, async () => {
+    await db.transactions.update(id, {
+      deleted_at: now,
+      updated_at: now,
+      sync_status: 'pending'
+    });
+
+    const existingItems = await db.transaction_items
+      .where('transaction_id')
+      .equals(id)
+      .toArray();
+
+    if (existingItems.length > 0) {
+      await db.transaction_items.bulkPut(
+        existingItems.map((it) => ({
+          ...it,
+          deleted_at: now,
+          updated_at: now,
+          sync_status: 'pending'
+        }))
+      );
+    }
   });
 }
 
@@ -286,10 +434,11 @@ export async function softDeleteAccount(id) {
 export async function saveCategory(catData) {
   const now = new Date().toISOString();
   const record = {
-    id: catData.id || uuidv7(),
-    workspace_id: catData.workspace_id,
-    name: catData.name.trim(),
-    type: catData.type || 'expense',
+    id: String(catData.id || uuidv7()),
+    workspace_id: String(catData.workspace_id || 'personal'),
+    name: String(catData.name || '').trim(),
+    type: String(catData.type || 'expense'),
+    keywords: String(catData.keywords || '').trim(),
     updated_at: now,
     deleted_at: null,
     sync_status: 'pending'

@@ -1,4 +1,5 @@
 import { KOPDES_UNITS } from '../db.js';
+import { matchBestCategory } from './categoryMatcher.js';
 
 /**
  * Kamus kata bilangan Bahasa Indonesia ke nilai numerik
@@ -488,7 +489,10 @@ function formatCleanNote(cleanedText, rawText) {
 /**
  * Fungsi Utama: Parse kalimat suara/teks Bahasa Indonesia menjadi objek siap-isi ke TransactionForm
  */
-export function parseVoiceInput(rawTranscript, { activeWorkspace = 'personal', allAccounts = [], allCategories = [] } = {}) {
+export function parseVoiceInput(
+  rawTranscript,
+  { activeWorkspace = 'personal', allAccounts = [], allCategories = [], allTransactions = [] } = {}
+) {
   const transcript = (rawTranscript || '').trim();
   if (!transcript) {
     return {
@@ -514,7 +518,13 @@ export function parseVoiceInput(rawTranscript, { activeWorkspace = 'personal', a
   const workspace_id = detectWorkspace(lower, activeWorkspace);
   const type = detectTransactionType(lower);
   const account_id = detectAccount(lower, workspace_id, allAccounts);
-  const category_id = detectCategory(lower, workspace_id, type, allCategories);
+  const category_id = matchBestCategory({
+    text: transcript,
+    workspaceId: workspace_id,
+    txType: type,
+    allCategories,
+    allTransactions
+  });
   const note = formatCleanNote(cleanedText, transcript);
 
   // Deteksi Dana Talangan / Reimburse

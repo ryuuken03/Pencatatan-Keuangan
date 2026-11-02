@@ -1,4 +1,5 @@
 import { KOPDES_UNITS } from '../db.js';
+import { matchBestCategory } from './categoryMatcher.js';
 
 const INDONESIAN_MONTHS = {
   jan: 1, januari: 1,
@@ -388,7 +389,7 @@ export function extractReceiptNumber(rawText) {
  */
 export function parseReceiptText(
   rawText,
-  { activeWorkspace = 'personal', allAccounts = [], allCategories = [] } = {}
+  { activeWorkspace = 'personal', allAccounts = [], allCategories = [], allTransactions = [] } = {}
 ) {
   const cleanRaw = (rawText || '').trim();
   const lines = cleanRaw
@@ -423,28 +424,24 @@ export function parseReceiptText(
     if (bk) account_id = bk.id;
   }
 
-  const catType = type === 'income' ? 'income' : 'expense';
-  const wsCategories = allCategories.filter(
-    (c) => c.workspace_id === workspace_id && c.type === catType
-  );
-  let category_id = wsCategories[0]?.id || '';
+  const note = buildReceiptNote(merchant, items);
 
-  if (/\b(pertamina|spbu|pertalite|pertamax|solar|bbm|bensin|parkir|tol)\b/.test(lower)) {
-    const c = wsCategories.find((cat) => /transport|bbm|perjalanan/i.test(cat.name));
-    if (c) category_id = c.id;
-  } else if (/\b(atk|fotokopi|kertas|tinta|pln|token|listrik|wifi|pdam)\b/.test(lower)) {
-    const c = wsCategories.find((cat) => /tagihan|operasional|atk|listrik/i.test(cat.name));
-    if (c) category_id = c.id;
-  } else if (/\b(pupuk|bibit|urea|npk|pestisida|kulakan|grosir|hpp)\b/.test(lower)) {
-    const c = wsCategories.find((cat) => /belanja barang|hpp|bahan/i.test(cat.name));
-    if (c) category_id = c.id;
-  } else if (/\b(apotek|klinik|obat|rs|rumah sakit)\b/.test(lower)) {
-    const c = wsCategories.find((cat) => /kesehatan/i.test(cat.name));
-    if (c) category_id = c.id;
-  } else if (/\b(indomaret|alfamart|superindo|warung|rm\.|resto|makan|minum|sembako|beras|minyak|gula|kopi)\b/.test(lower)) {
-    const c = wsCategories.find((cat) => /makan|kebutuhan|konsumsi|belanja/i.test(cat.name));
-    if (c) category_id = c.id;
-  }
+  // Gunakan pencocokan kategori dinamis (Custom Keywords -> Riwayat Transaksi -> Sinonim -> Default)
+  const categorySearchContext = [
+    merchant,
+    ...items.map((it) => it.name),
+    cleanRaw
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const category_id = matchBestCategory({
+    text: categorySearchContext,
+    workspaceId: workspace_id,
+    txType: type,
+    allCategories,
+    allTransactions
+  });
 
   let unit_usaha = workspace_id === 'kopdes' ? KOPDES_UNITS[0] : '';
   if (workspace_id === 'kopdes') {
@@ -456,8 +453,6 @@ export function parseReceiptText(
       unit_usaha = KOPDES_UNITS[1];
     }
   }
-
-  const note = buildReceiptNote(merchant, items);
 
   return {
     workspace_id,

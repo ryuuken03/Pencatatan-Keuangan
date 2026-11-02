@@ -323,6 +323,7 @@
       {activeWorkspace}
       {allAccounts}
       {allCategories}
+      {allTransactions}
       onApply={handleApplySmartInput}
       onClose={() => (isVoiceModalOpen = false)}
     />
@@ -333,6 +334,7 @@
       {activeWorkspace}
       {allAccounts}
       {allCategories}
+      {allTransactions}
       onApply={handleApplySmartInput}
       onClose={() => (isReceiptModalOpen = false)}
     />
