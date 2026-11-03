@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <!-- Strict Content Security Policy (PRD 6.1.4) -->
+    <!-- Strict Content Security Policy (PRD 6.1.4) + Local WASM OCR Support -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://*.supabase.co http://localhost:* http://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self';"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob: https://cdn.jsdelivr.net; connect-src 'self' blob: data: https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://fonts.googleapis.com https://fonts.gstatic.com https://*.supabase.co http://localhost:* http://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self';"
     />
     <title>Buku Kas — Pribadi, Usaha & Manager Kopdes</title>
     <meta

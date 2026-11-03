@@ -133,9 +133,20 @@
         rawReceiptText = simulatedText || file.__simulatedReceiptText;
         ocrEngineName = "Simulasi Struk Otomatis";
       } else {
-        const ocrRes = await extractTextFromReceiptImage(comp.canvas, (msg) => {
-          progressText = msg;
-        });
+        const primaryOcrTarget = highContrastMode
+          ? comp.ocrCanvas || comp.canvas
+          : comp.rawOcrCanvas || comp.canvas;
+        const secondaryOcrTarget = highContrastMode
+          ? comp.rawOcrCanvas
+          : comp.ocrCanvas;
+
+        const ocrRes = await extractTextFromReceiptImage(
+          primaryOcrTarget,
+          (msg) => {
+            progressText = msg;
+          },
+          secondaryOcrTarget,
+        );
         ocrEngineName = ocrRes.engine;
         if (ocrRes.text) {
           rawReceiptText = ocrRes.text;

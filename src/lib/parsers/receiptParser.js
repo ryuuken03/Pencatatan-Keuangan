@@ -17,6 +17,21 @@ const INDONESIAN_MONTHS = {
 };
 
 /**
+ * Normalisasi artefak OCR umum pada angka struk dot-matrix / thermal:
+ * - Spasi di sekitar pemisah ribuan: "48, 400" -> "48,400", "16. 000" -> "16.000"
+ * - Huruf O/o yang terbaca di tengah/akhir digit angka: "16.00O" -> "16.000", "9,2OO" -> "9,200"
+ * - Huruf l/I di awal angka ribuan: "l6.000" -> "16.000"
+ */
+export function normalizeOcrLineNumbers(line) {
+  if (!line || typeof line !== 'string') return '';
+  return line
+    .replace(/\b[lI|](\d{1,2}[.,]\d{3})\b/g, '1$1')
+    .replace(/(\d)[Oo](\d)/g, '$10$2')
+    .replace(/(\d)[Oo]([Oo]?)\b/g, (_, d, o2) => `${d}0${o2 ? '0' : ''}`)
+    .replace(/(\b\d{1,3})\s*([.,])\s*(\d{3}\b)/g, '$1$2$3');
+}
+
+/**
  * Ekstraksi angka Rupiah dari potongan teks baris struk.
  * Menangani format:
  * - "Rp 125.500" -> 125500
@@ -28,8 +43,9 @@ const INDONESIAN_MONTHS = {
 export function parseReceiptCurrencyValue(rawStr) {
   if (!rawStr || typeof rawStr !== 'string') return 0;
 
-  let s = rawStr
+  let s = normalizeOcrLineNumbers(rawStr)
     .trim()
+    .replace(/^[(\-+\s]+|[)\s]+$/g, '')
     .replace(/[,.-]+$/, '')
     .replace(/[.,]00$/, '');
 
@@ -48,14 +64,21 @@ export function parseReceiptCurrencyValue(rawStr) {
  * Cari seluruh kandidat angka nominal pada satu baris teks struk
  */
 function extractAmountsFromLine(line) {
-  const cleanedLine = line
-    // Hapus kode nomor nota/invoice yang mengandung garis miring atau tanda hubung (misal CS/24/261101/0105, IDM-20261102-089, (0-3))
-    .replace(/\b[A-Za-z0-9]*[\/\-][A-Za-z0-9\/\-]+\b/g, ' ')
-    // Hapus nomor telepon / reservasi (misal 087763253489 atau +628...)
-    .replace(/\b(?:\+?62|08)\d{7,13}\b/g, ' ')
+  const normLine = normalizeOcrLineNumbers(line);
+  const cleanedLine = normLine
+    // Hapus NPWP (misal 001.337.994.6-092.000 atau 0312582299612000)
+    .replace(/\b\d{2,3}[.\-]?\d{3}[.\-]?\d{3}[.\-]?\d[.\-]?\d{3}[.\-]?\d{3}\b/g, ' ')
+    // Hapus kode nomor nota/invoice yang mengandung garis miring atau tanda hubung (misal 03.11.26-20:48/4.5.3/TCM7-36335/ADITY/02)
+    .replace(/\b[A-Za-z0-9_.]*[\/\-][A-Za-z0-9_.\/\-]+\b/g, ' ')
+    // Hapus nomor telepon / call center / nomor pesanan panjang (>= 10 digit tanpa pemisah ribuan)
+    .replace(/\b(?:\+?62|08)\d[\d.\-\s]{6,15}\b/g, ' ')
+    .replace(/\b\d{10,24}\b/g, ' ')
+    .replace(/\b1500\d{3}\b/g, ' ')
+    // Hapus kode pos 5 digit setelah nama kota/kabupaten (misal GRESIK, 61153)
+    .replace(/,\s*\b\d{5}\b/g, ' ')
     // Hapus pola tanggal & jam
-    .replace(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g, ' ')
-    .replace(/\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b/g, ' ')
+    .replace(/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/g, ' ')
+    .replace(/\b\d{4}[\/.\-]\d{1,2}[\/.\-]\d{1,2}\b/g, ' ')
     .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ');
 
   const matches = cleanedLine.match(/(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+(?:[.,]00|,-)?|\d{4,9})/gi) || [];
@@ -65,7 +88,7 @@ function extractAmountsFromLine(line) {
     const numPart = m.replace(/^rp\.?\s*/i, '').trim();
     const val = parseReceiptCurrencyValue(numPart);
 
-    // Harga di struk Indonesia selalu kelipatan Rp 50 atau Rp 100 (mencegah kode tanggal/nota seperti 261101 atau 88412 dianggap harga)
+    // Harga di struk Indonesia selalu kelipatan Rp 50 atau Rp 100 (mencegah kode tanggal/nota/DPP/PPN ganjil seperti 51,081 atau 8,288 dianggap harga)
     if (val % 50 !== 0) {
       continue;
     }
@@ -80,54 +103,101 @@ function extractAmountsFromLine(line) {
 /**
  * Deteksi Nominal Total dari teks struk
  */
-export function extractReceiptTotal(lines) {
+export function extractReceiptTotal(lines, items = []) {
   if (!lines || lines.length === 0) return 0;
 
-  const ignorePattern = /\b(kembali|kembalian|change|hemat|diskon|disc|potongan|poin|point|telp|npwp|member|kasir|item|qty)\b/i;
-  const strongTotalPattern = /\b(grand\s*total|total\s*bayar|total\s*belanja|total\s*pembayaran|total\s*tagihan|total\s*harga|jumlah\s*bayar|harga\s*jual|nominal\s*bayar|total)\b/i;
-  const subTotalPattern = /\b(sub\s*total|subtotal|jumlah)\b/i;
-  const paymentPattern = /\b(tunai|cash|debit|qris|gopay|ovo|dana|transfer|bayar)\b/i;
+  // Abaikan baris kembalian, diskon/hemat/voucher, pajak DPP/PPN/Harga Jual pajak, serta baris jumlah item/pesanan
+  const ignorePattern =
+    /\b(kembali|kembalian|change|uang\s*kecil|hemat|diskon|disc|potongan|voucher|poin|point|telp|sms|wa|npwp|member|kasir|operator|total\s*(?:item|qty|barang|pesanan|produk|diskon|hemat)|dpp|ppn|harga\s*jual)\b/i;
 
+  // Prioritas 1: Kata kunci Grand Total / Total Belanja / Total Harga / Pembayaran Sebenarnya / Purchase
+  const explicitTotalPattern =
+    /\b(grand\s*total|total\s*belanja|total\s*bayar|total\s*pembayaran|total\s*tagihan|total\s*harga|pembayaran\s*sebenarnya|nominal\s*pendapatan|jumlah\s*bayar|nominal\s*bayar|purchase)\b/i;
+
+  // Prioritas 2: Kata kunci Total / Subtotal umum (bukan header tabel)
+  const genericTotalPattern = /\b(total|sub\s*total|subtotal)\b/i;
+  const tableHeaderPattern = /\b(nama\s*produk|nama\s*barang|deskripsi)\b|\b(harga)\b.*\b(jumlah|qty|subtotal)\b/i;
+
+  const nonCashPaymentPattern = /\b(non\s*tunai|qris|debit|kredit|gopay|ovo|dana|shopeepay|transfer)\b/i;
+  const cashTenderedPattern = /\b(tunai|cash|bayar\s*jumlah|jumlah\s*uang|bayar)\b/i;
+  const changeLinePattern = /\b(kembali|kembalian|change|uang\s*kecil)\b/i;
+
+  // 1. Cari dari bawah ke atas untuk Explicit Total (TOTAL BELANJA, Total Harga, Pembayaran Sebenarnya, PURCHASE)
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    if (ignorePattern.test(line) || subTotalPattern.test(line)) continue;
+    if (ignorePattern.test(line) || tableHeaderPattern.test(line)) continue;
 
-    if (strongTotalPattern.test(line)) {
+    if (explicitTotalPattern.test(line)) {
       const amounts = extractAmountsFromLine(line);
       if (amounts.length > 0) {
-        return Math.max(...amounts);
+        return amounts[amounts.length - 1];
       }
+      // Jika angka berada di baris tepat di bawahnya (karena pemisahan blok OCR)
       if (i + 1 < lines.length) {
-        const nextAmounts = extractAmountsFromLine(lines[i + 1]);
-        if (nextAmounts.length > 0) {
-          return Math.max(...nextAmounts);
+        const nextLine = lines[i + 1];
+        if (!ignorePattern.test(nextLine) && !cashTenderedPattern.test(nextLine)) {
+          const nextAmounts = extractAmountsFromLine(nextLine);
+          if (nextAmounts.length > 0) {
+            return nextAmounts[nextAmounts.length - 1];
+          }
         }
       }
     }
   }
 
+  // 2. Cari Generic Total / Subtotal (dari bawah ke atas)
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    if (ignorePattern.test(line)) continue;
-    if (subTotalPattern.test(line)) {
+    if (ignorePattern.test(line) || tableHeaderPattern.test(line)) continue;
+    if (genericTotalPattern.test(line)) {
       const amounts = extractAmountsFromLine(line);
       if (amounts.length > 0) {
-        return Math.max(...amounts);
+        return amounts[amounts.length - 1];
       }
     }
   }
 
+  // 3. Cek pembayaran Non-Tunai (biasanya pas sesuai tagihan, misal "NON TUNAI : 9,200")
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (ignorePattern.test(line)) continue;
-    if (paymentPattern.test(line)) {
+    if (nonCashPaymentPattern.test(line)) {
       const amounts = extractAmountsFromLine(line);
       if (amounts.length > 0) {
-        return Math.max(...amounts);
+        return amounts[amounts.length - 1];
       }
     }
   }
 
+  // 4. Jika ada baris Tunai/Bayar DAN Kembalian, hitung selisihnya (Bayar - Kembali = Total Belanja)
+  let tenderedAmount = 0;
+  let changeAmount = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!changeAmount && changeLinePattern.test(line)) {
+      const amounts = extractAmountsFromLine(line);
+      if (amounts.length > 0) changeAmount = amounts[amounts.length - 1];
+    } else if (!tenderedAmount && !ignorePattern.test(line) && cashTenderedPattern.test(line)) {
+      const amounts = extractAmountsFromLine(line);
+      if (amounts.length > 0) tenderedAmount = amounts[amounts.length - 1];
+    }
+  }
+  if (tenderedAmount > 0 && changeAmount > 0 && tenderedAmount > changeAmount) {
+    return tenderedAmount - changeAmount;
+  }
+
+  // 5. Jika daftar item produk berhasil diekstrak, gunakan penjumlahan seluruh item
+  if (items && items.length > 0) {
+    const itemsSum = items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+    if (itemsSum > 0) return itemsSum;
+  }
+
+  // 6. Fallback ke baris pembayaran tunai
+  if (tenderedAmount > 0) {
+    return tenderedAmount;
+  }
+
+  // 7. Fallback terakhir: angka terbesar yang bukan baris terlarang
   let maxCandidate = 0;
   for (const line of lines) {
     if (ignorePattern.test(line)) continue;
@@ -148,51 +218,81 @@ export function extractReceiptTotal(lines) {
 export function extractReceiptItems(lines, merchant = '') {
   if (!lines || lines.length === 0) return [];
 
+  // Header kolom tabel (misal "Nama Produk  Harga  Jumlah  Subtotal" pada Momoyo) -> lewati, jangan break!
+  const tableHeaderPattern =
+    /\b(nama\s*produk|nama\s*barang|nama\s*item|deskripsi)\b|\b(harga)\b.*\b(jumlah|qty|subtotal|total)\b/i;
+
   // Kata kunci metadata/header struk (tidak boleh masuk ke daftar produk)
   const metadataLinePattern =
-    /\b(no\s*nota|no\.?\s*nota|nota\s*[:#]|no\.?\s*struk|no\.?\s*transaksi|no\.?\s*trx|no\.?\s*bukti|no\.?\s*bon|no\.?\s*inv|no\.?\s*kwitansi|no\.?\s*ref|no\.?\s*order|waktu|tanggal|tgl|jam|kasir|cashier|jenis\s*order|tipe\s*order|nama\s*order|free\s*table|pelanggan|customer|member|meja|table|reservasi|dicetak|dibayar|npwp|telp|tlp|hp|wa|fax|jl\.|jln\.|jalan|pasar|kec\.|kab\.|kota|shift|untuk|kepada|suplier|supplier|dairy\.co)\b/i;
+    /\b(no\s*nota|no\.?\s*nota|nota\s*[:#]|no\.?\s*struk|no\.?\s*transaksi|no\.?\s*trx|no\.?\s*bukti|no\.?\s*bon|no\.?\s*inv|no\.?\s*kwitansi|no\.?\s*ref|no\.?\s*order|nomor\s*pesanan|waktu|tanggal|tgl|jam|kasir|cashier|operator|saluran|toko\s*fisik|bawa\s*pulang|take\s*away|dine\s*in|jenis\s*order|tipe\s*order|nama\s*order|free\s*table|pelanggan|customer|member|meja|table|reservasi|dicetak|dibayar|npwp|telp|tlp|hp|wa|sms|fax|jl\.|jln\.|jalan|raya|daendles|kauman|raci|sidayu|sidomulyo|gresik|regency|jawa|timur|barat|tengah|jakarta|utara|selatan|gedung|menara|boulevard|pantai\s*indah|kapuk|indomarco|prismatama|alfaria|pasar|kec\.|kab\.|kota|shift|untuk|kepada|suplier|supplier|dairy\.co|layanan\s*konsumen|klikindomaret|gratis\s*ongkir)\b/i;
 
+  // Penanda akhir bagian item produk (memasuki bagian ringkasan total di bawah)
   const stopFooterPattern =
-    /\b(grand\s*total|total\s*bayar|total\s*belanja|total\s*pembayaran|total\s*tagihan|total\s*harga|jumlah\s*bayar|harga\s*jual|sub\s*total|subtotal|total)\b/i;
+    /\b(grand\s*total|total\s*bayar|total\s*belanja|total\s*pembayaran|total\s*tagihan|total\s*harga|total\s*pesanan|nominal\s*pendapatan|pembayaran\s*sebenarnya|jumlah\s*bayar|harga\s*jual|sub\s*total|subtotal)\b|^total\b/i;
+
+  // Baris potongan/voucher langsung di bawah item (misal "VOUCHER : (2,900)")
+  const itemDiscountPattern = /\b(voucher|diskon|disc|potongan|hemat\s*item)\b/i;
 
   const nonItemLinePattern =
-    /\b(tunai|cash|kartu|debit|kredit|qris|bca|bri|mandiri|bni|bsi|statis|gopay|ovo|dana|transfer|bayar|kembali|kembalian|change|ppn|pajak|tax|diskon|disc|hemat|potongan|status|pembayaran|terima\s*kasih|thank\s*you|lunas|nominal|nota|struk|kwitansi|faktur|invoice)\b/i;
+    /\b(tunai|cash|kartu|debit|kredit|qris|bca|bri|mandiri|bni|bsi|wondr|trxid|purchase|statis|gopay|ovo|dana|transfer|bayar|kembali|kembalian|change|uang\s*kecil|ppn|dpp|pajak|tax|anda\s*hemat|status|pembayaran|terima\s*kasih|thank\s*you|lunas|nominal|nota|struk|kwitansi|faktur|invoice|pendapat\s*anda|kritik\s*dan\s*saran|kemitraan|partnership)\b/i;
+
+  const variantModifierPattern =
+    /\b(normal|less|more|extra|no\s+ice|ice|sugar|gula|level|spicy|pedas|size|regular|large|medium|small|hot|cold|hangat|dingin|topping|addon)\b/i;
 
   const items = [];
   let pendingItemName = '';
 
   for (let i = 0; i < lines.length; i++) {
-    const rawLine = lines[i].trim();
+    const rawLine = normalizeOcrLineNumbers(lines[i]).trim();
     if (!rawLine) continue;
 
-    // Berhenti memindai item ketika sudah mencapai baris SUBTOTAL / TOTAL
+    // 1. Jika baris adalah header kolom tabel ("Nama Produk Harga Jumlah Subtotal"), lewati saja
+    if (tableHeaderPattern.test(rawLine) && extractAmountsFromLine(rawLine).length === 0) {
+      pendingItemName = '';
+      continue;
+    }
+
+    // 2. Berhenti memindai item ketika sudah mencapai baris SUBTOTAL / TOTAL di bagian bawah struk
     if (stopFooterPattern.test(rawLine)) {
       break;
     }
 
-    // Lewati garis pemisah (---, ===)
-    if (/^[\-=*_#.\s]+$/.test(rawLine)) {
+    // 3. Tangani baris VOUCHER / DISKON per item (misal "VOUCHER : (2,900)" pada struk Indomaret)
+    if (
+      itemDiscountPattern.test(rawLine) &&
+      !/\b(anda\s*hemat|total\s*hemat|total\s*diskon)\b/i.test(rawLine)
+    ) {
+      if (items.length > 0) {
+        const discAmounts = extractAmountsFromLine(rawLine);
+        if (discAmounts.length > 0) {
+          const discVal = discAmounts[discAmounts.length - 1];
+          const lastItem = items[items.length - 1];
+          if (discVal > 0 && discVal < lastItem.amount) {
+            lastItem.amount -= discVal;
+          }
+        }
+      }
       pendingItemName = '';
       continue;
     }
 
-    // Lewati baris Nama Toko utama di bagian atas (2 baris pertama yang hanya berisi nama toko/cabang)
+    // 4. Lewati garis pemisah (---, ===, ***)
+    if (/^[\-=*_#.\s]+$/.test(rawLine)) {
+      continue;
+    }
+
+    // 5. Lewati baris Nama Toko utama di bagian atas (2 baris pertama yang hanya berisi nama toko/cabang)
     if (i <= 1 && !/\d/.test(rawLine)) {
       continue;
     }
-    if (merchant && i <= 2 && rawLine.toLowerCase() === merchant.toLowerCase()) {
+    if (merchant && i <= 3 && rawLine.toLowerCase() === merchant.toLowerCase()) {
       continue;
     }
 
-    // Lewati baris metadata/header (No Nota, Waktu, Kasir, Jenis Order, dll) atau baris "Key : Value"
-    if (metadataLinePattern.test(rawLine) || nonItemLinePattern.test(rawLine) || /\s*:\s*/.test(rawLine)) {
-      pendingItemName = '';
-      continue;
-    }
-
-    // Lewati baris yang memiliki pola tanggal (01/11/2026 atau 01 Nov 26) atau jam (19:57)
+    // 6. Lewati baris yang memiliki pola tanggal (03.11.26, 2026-11-03) atau jam (20:48)
     if (
-      /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/.test(rawLine) ||
+      /\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/.test(rawLine) ||
+      /\b20\d{2}[\/.\-]\d{1,2}[\/.\-]\d{1,2}\b/.test(rawLine) ||
       /\b\d{1,2}\s+(?:jan|feb|mar|apr|mei|jun|jul|agu|sep|okt|nov|des)[a-z]*\s+\d{2,4}\b/i.test(rawLine) ||
       /\b([01]?\d|2[0-3]):[0-5]\d\b/.test(rawLine)
     ) {
@@ -200,16 +300,40 @@ export function extractReceiptItems(lines, merchant = '') {
       continue;
     }
 
-    // Kasus A: Baris berisi angka nominal saja (ketika OCR memisahkan kolom nama produk di baris atas dan harga di baris bawah)
-    const standalonePriceMatch = rawLine.match(
-      /^(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+(?:[.,]00|,-)?|\d{4,8})$/i
-    );
-    if (standalonePriceMatch && pendingItemName) {
-      const itemAmount = parseReceiptCurrencyValue(standalonePriceMatch[1]);
-      if (itemAmount >= 500 && itemAmount % 50 === 0) {
+    // 7. Lewati baris metadata/header (No Nota, Waktu, Kasir, Alamat, dll) atau baris "Key : Value"
+    if (metadataLinePattern.test(rawLine) || nonItemLinePattern.test(rawLine) || /\s*:\s*/.test(rawLine)) {
+      pendingItemName = '';
+      continue;
+    }
+
+    // 8. Kasus A: Baris berisi angka harga / qty / subtotal saja di bawah nama produk
+    // Menangani:
+    // - "23,900" (1 angka harga)
+    // - "1 23900 23,900" (format Indomaret: Qty HargaSatuan Subtotal saat terpisah baris)
+    // - "16.000 1 16.000" (format Momoyo: HargaSatuan Qty Subtotal di bawah nama produk)
+    // - "2 x 15.000 30.000" (format perkalian qty)
+    const isNumericPriceRow = /^(?:rp\.?\s*|\d|[.,xX@*\s\-])+$/i.test(rawLine) && /\d{3,}/.test(rawLine);
+    if (isNumericPriceRow && pendingItemName) {
+      const rowAmounts = extractAmountsFromLine(rawLine);
+      if (rowAmounts.length > 0) {
+        const itemAmount = rowAmounts[rowAmounts.length - 1];
+        // Deteksi qty jika > 1 (misal "2 15000 30,000" atau "15.000 2 30.000" atau "2 x 15.000")
+        let qty = 1;
+        const qtyStartMatch = rawLine.match(/^(\d{1,2})\s*(?:[xX@*]|\s+\d{3,})/);
+        const qtyMiddleMatch = rawLine.match(/^\d[\d.,]*\s+(\d{1,2})\s+\d[\d.,]*$/);
+        if (qtyStartMatch) {
+          qty = parseInt(qtyStartMatch[1], 10) || 1;
+        } else if (qtyMiddleMatch) {
+          qty = parseInt(qtyMiddleMatch[1], 10) || 1;
+        }
+        const finalName =
+          qty > 1 && !/^\d+x\s/i.test(pendingItemName)
+            ? `${qty}x ${pendingItemName}`
+            : pendingItemName;
+
         items.push({
           id: `item-${items.length + 1}`,
-          name: pendingItemName,
+          name: finalName,
           amount: itemAmount
         });
         pendingItemName = '';
@@ -217,23 +341,23 @@ export function extractReceiptItems(lines, merchant = '') {
       }
     }
 
-    // Kasus B: Baris produk lengkap (Nama Produk di kiri + Harga di ujung kanan baris)
+    // 9. Kasus B: Baris produk lengkap (Nama Produk di kiri + [Qty HargaSatuan] + Subtotal di ujung kanan baris)
+    // Contoh: "SERASOFT SHP DT 170 1 23900 23,900" atau "KAKI3 PENYEGAR 500ML 1 9200 9,200"
     const endPriceMatch = rawLine.match(
       /^(.+?)\s+(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+(?:[.,]00|,-)?|\d{4,8})\s*$/i
     );
 
     if (endPriceMatch) {
-      const leftText = endPriceMatch[1].trim();
+      let leftText = endPriceMatch[1].trim();
       const rawPriceStr = endPriceMatch[2].trim();
       const itemAmount = parseReceiptCurrencyValue(rawPriceStr);
 
-      // Harga produk wajib >= 500, kelipatan Rp 50, dan bagian nama produk bukan kode nomor nota ('/')
       if (itemAmount >= 500 && itemAmount % 50 === 0 && !/[\/]/.test(leftText)) {
         // Cek apakah bagian kiri adalah "2 x 15.000" (format 2 baris minimarket)
         const isQtyMultiplierLine = /^\d+\s*[xX@*]\s*[\d.,]+$/.test(leftText);
         if (isQtyMultiplierLine && pendingItemName) {
           const qtyMatch = leftText.match(/^(\d+)\s*[xX@*]/);
-          const qtyPrefix = qtyMatch ? `${qtyMatch[1]}x ` : '';
+          const qtyPrefix = qtyMatch && parseInt(qtyMatch[1], 10) > 1 ? `${qtyMatch[1]}x ` : '';
           items.push({
             id: `item-${items.length + 1}`,
             name: `${qtyPrefix}${pendingItemName}`,
@@ -243,15 +367,40 @@ export function extractReceiptItems(lines, merchant = '') {
           continue;
         }
 
+        // Bersihkan ekor "Qty HargaSatuan" pada format 1 baris Indomaret/Alfamart (misal "SERASOFT SHP DT 170 1 23900")
+        let inlineQty = 1;
+        const trailingQtyUnitMatch = leftText.match(
+          /^(.+?)\s+(\d{1,3})\s*(?:[xX@*]\s*)?(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d{3,8})$/i
+        );
+        if (trailingQtyUnitMatch) {
+          const candidateName = trailingQtyUnitMatch[1].trim();
+          const candidateQty = parseInt(trailingQtyUnitMatch[2], 10) || 1;
+          const candidateUnit = parseReceiptCurrencyValue(trailingQtyUnitMatch[3]);
+          if (
+            candidateName &&
+            /[a-zA-Z]{2,}/.test(candidateName) &&
+            candidateUnit >= 500 &&
+            candidateUnit <= itemAmount
+          ) {
+            leftText = candidateName;
+            inlineQty = candidateQty;
+          }
+        }
+
         const cleanedName = leftText
           .replace(/\s{2,}/g, ' ')
           .replace(/[:\-.,]+$/, '')
           .trim();
 
         if (cleanedName && /[a-zA-Z]{2,}/.test(cleanedName)) {
+          const finalName =
+            inlineQty > 1 && !/^\d+x\s/i.test(cleanedName)
+              ? `${inlineQty}x ${cleanedName}`
+              : cleanedName;
+
           items.push({
             id: `item-${items.length + 1}`,
-            name: cleanedName,
+            name: finalName,
             amount: itemAmount
           });
         }
@@ -260,16 +409,23 @@ export function extractReceiptItems(lines, merchant = '') {
       }
     }
 
-    // Jika baris diawali tanda '+' tanpa harga di kanan (misal "+ 1 Level 1" pada struk resto/kafe),
-    // gabungkan sebagai keterangan tambahan ke produk terakhir di atasnya
+    // 10. Jika baris diawali tanda '+' tanpa harga di kanan (misal "+ 1 Level 1"),
+    // gabungkan sebagai keterangan tambahan ke produk terakhir
     if (/^\+\s*\S+/.test(rawLine) && items.length > 0) {
       items[items.length - 1].name += ` (${rawLine.replace(/\s{2,}/g, ' ')})`;
       continue;
     }
 
-    // Baris teks produk tanpa harga (simpan sementara jika harga ada di baris bawahnya)
+    // 11. Jika sudah ada pendingItemName dan baris ini adalah varian minuman/makanan (misal "Normal Ice/Normal Sugar"),
+    // gabungkan ke pendingItemName agar tidak menimpa nama produk utamanya
+    if (pendingItemName && variantModifierPattern.test(rawLine) && !/\d{4,}/.test(rawLine)) {
+      pendingItemName = `${pendingItemName} (${rawLine.replace(/\s{2,}/g, ' ')})`;
+      continue;
+    }
+
+    // 12. Baris teks nama produk tanpa harga (simpan sementara karena harganya ada di baris bawahnya)
     if (/[a-zA-Z]{3,}/.test(rawLine) && !/[\/:]/.test(rawLine) && i > 1) {
-      pendingItemName = rawLine;
+      pendingItemName = rawLine.replace(/\s{2,}/g, ' ');
     }
   }
 
@@ -351,8 +507,39 @@ export function extractReceiptDate(rawText) {
 export function extractReceiptMerchant(lines) {
   if (!lines || lines.length === 0) return '';
 
+  const fullText = lines.join('\n');
+
+  // Deteksi khusus jaringan minimarket yang sering memiliki header PT / alamat gedung di baris paling atas
+  if (/\b(indomaret|indomarco\s+prismatama|klikindomaret)\b/i.test(fullText)) {
+    if (/^indomaret\b/i.test(lines[0])) {
+      return lines[0].trim();
+    }
+    // Cari nama gerai/cabang tepat setelah baris NPWP (contoh: "PAHLAWAN SIDAYU" atau "SIDAYU")
+    for (let i = 0; i < Math.min(lines.length, 10); i++) {
+      if (/\bnpwp\b/i.test(lines[i]) && i + 1 < lines.length) {
+        const branchCandidate = lines[i + 1]
+          .replace(/^npwp[\d.\-\s]+/i, '')
+          .trim();
+        if (
+          branchCandidate.length >= 3 &&
+          !/^(jl\.|jln\.|jalan|kec\.|kab\.|kota|---)/i.test(branchCandidate)
+        ) {
+          return `Indomaret ${branchCandidate}`;
+        }
+      }
+    }
+    return 'Indomaret';
+  }
+
+  if (/\b(alfamart|sumber\s+alfaria\s+trijaya|alfagift)\b/i.test(fullText)) {
+    if (/^alfamart\b/i.test(lines[0])) {
+      return lines[0].trim();
+    }
+    return 'Alfamart';
+  }
+
   const skipHeaderPattern =
-    /^(struk|nota|kwitansi|bukti|faktur|invoice|receipt|copy|selamat\s+datang|terima\s+kasih|thank\s+you|npwp|telp|tlp|hp|wa|fax|jl\.|jln\.|jalan|kec\.|kab\.|kota|tanggal|tgl|kasir|no\.|shift|---|\*\*\*|===)/i;
+    /^(struk|nota|kwitansi|bukti|faktur|invoice|receipt|copy|selamat\s+datang|terima\s+kasih|thank\s+you|npwp|telp|tlp|hp|wa|fax|jl\.|jln\.|jalan|kec\.|kab\.|kota|tanggal|tgl|kasir|no\.|nomor|shift|---|\*\*\*|===)/i;
 
   for (let i = 0; i < Math.min(lines.length, 6); i++) {
     const clean = lines[i]
@@ -362,7 +549,21 @@ export function extractReceiptMerchant(lines) {
     if (clean.length < 3) continue;
     if (skipHeaderPattern.test(clean)) continue;
     if (!/[a-zA-Z]{2,}/.test(clean)) continue;
-    if (/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/.test(clean)) continue;
+    if (/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/.test(clean)) continue;
+
+    // Jika baris berikutnya memuat nama toko + nama cabang (misal baris 1 "MOMOYO", baris 2 "MOMOYO KAUMAN"), ambil yang lebih lengkap
+    if (i + 1 < lines.length) {
+      const nextClean = lines[i + 1]
+        .replace(/^[*=\-#\s]+|[*=\-#\s]+$/g, '')
+        .trim();
+      if (
+        nextClean.length > clean.length &&
+        nextClean.toLowerCase().startsWith(clean.toLowerCase()) &&
+        !skipHeaderPattern.test(nextClean)
+      ) {
+        return nextClean;
+      }
+    }
 
     return clean;
   }
@@ -375,12 +576,23 @@ export function extractReceiptMerchant(lines) {
  */
 export function extractReceiptNumber(rawText) {
   if (!rawText) return '';
-  const match = rawText.match(
-    /\b(?:no\.?\s*(?:nota|struk|transaksi|trx|bukti|bon|inv|kwitansi|ref)|inv|bkk|bkm)\s*[:#.\-]?\s*([A-Z0-9\/.\-]{3,24})/i
+
+  // 1. Format eksplisit "No. Nota / Nomor Pesanan / No. Struk / BKK / INV"
+  const explicitMatch = rawText.match(
+    /\b(?:(?:no\.?|nomor)\s*(?:nota|struk|pesanan|order|transaksi|trx|bukti|bon|inv|kwitansi|ref)|inv|bkk|bkm)\s*[:#.\-]?\s*([A-Z0-9\/.\-]{3,28})/i
   );
-  if (match && match[1]) {
-    return match[1].trim();
+  if (explicitMatch && explicitMatch[1]) {
+    return explicitMatch[1].trim();
   }
+
+  // 2. Format baris kode struk Indomaret/Alfamart: "03.11.26-20:48/4.5.3/TCM7-36335/ADITY/02"
+  const minimarketCodeMatch = rawText.match(
+    /\b\d{2}[\/.\-]\d{2}[\/.\-]\d{2,4}[\-\s]+\d{2}:\d{2}\/[\d.]+\/([A-Z0-9]+-\d+)\b/i
+  );
+  if (minimarketCodeMatch && minimarketCodeMatch[1]) {
+    return minimarketCodeMatch[1].trim();
+  }
+
   return '';
 }
 
@@ -397,11 +609,11 @@ export function parseReceiptText(
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const amount = extractReceiptTotal(lines);
   const date = extractReceiptDate(cleanRaw);
   const merchant = extractReceiptMerchant(lines);
   const no_bukti = extractReceiptNumber(cleanRaw);
   const items = extractReceiptItems(lines, merchant);
+  const amount = extractReceiptTotal(lines, items);
 
   const lower = cleanRaw.toLowerCase();
 
@@ -419,7 +631,7 @@ export function parseReceiptText(
   if (/\b(qris|gopay|ovo|dana|shopeepay|ewallet)\b/.test(lower)) {
     const ew = wsAccounts.find((a) => a.type === 'ewallet');
     if (ew) account_id = ew.id;
-  } else if (/\b(debit|transfer|bri|bca|mandiri|bni)\b/.test(lower)) {
+  } else if (/\b(debit|transfer|bri|bca|mandiri|bni|wondr)\b/.test(lower)) {
     const bk = wsAccounts.find((a) => a.type === 'bank');
     if (bk) account_id = bk.id;
   }
@@ -476,9 +688,103 @@ export function parseReceiptText(
 }
 
 /**
- * Ekstraksi Teks (OCR) dari Canvas / Blob Gambar Struk
+ * Susun blok-blok hasil deteksi TextDetector menjadi baris teks yang sejajar secara horizontal.
+ * Memecah blok multi-baris menjadi baris individual berdasarkan estimasi koordinat Y tiap sub-baris,
+ * sehingga kolom label di kiri dan kolom nominal di kanan tetap berada pada baris yang sama.
  */
-export async function extractTextFromReceiptImage(canvasOrBlob, onProgress = () => {}) {
+function reconstructLinesFromDetectedBlocks(detectedBlocks) {
+  if (!detectedBlocks || detectedBlocks.length === 0) return '';
+
+  const visualLines = [];
+  for (const block of detectedBlocks) {
+    const raw = String(block.rawValue || '').trim();
+    if (!raw) continue;
+    const subLines = raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (subLines.length === 0) continue;
+
+    const bx = block.boundingBox?.x || 0;
+    const by = block.boundingBox?.y || 0;
+    const bh = block.boundingBox?.height || subLines.length * 18;
+    const lineH = Math.max(12, bh / subLines.length);
+
+    for (let idx = 0; idx < subLines.length; idx++) {
+      visualLines.push({
+        rawValue: subLines[idx],
+        x: bx,
+        y: by + idx * lineH + lineH * 0.5,
+        height: lineH
+      });
+    }
+  }
+
+  if (visualLines.length === 0) return '';
+
+  visualLines.sort((a, b) => a.y - b.y);
+
+  const rows = [];
+  for (const vLine of visualLines) {
+    // Cari baris terdekat yang masih sejajar secara vertikal
+    let matchedRow = null;
+    for (let rIdx = rows.length - 1; rIdx >= Math.max(0, rows.length - 4); rIdx--) {
+      const candidateRow = rows[rIdx];
+      const tolerance = Math.max(10, Math.min(vLine.height, candidateRow.avgHeight) * 0.62);
+      if (Math.abs(vLine.y - candidateRow.y) <= tolerance) {
+        matchedRow = candidateRow;
+        break;
+      }
+    }
+
+    if (matchedRow) {
+      matchedRow.blocks.push(vLine);
+      const n = matchedRow.blocks.length;
+      matchedRow.y = (matchedRow.y * (n - 1) + vLine.y) / n;
+      matchedRow.avgHeight = (matchedRow.avgHeight * (n - 1) + vLine.height) / n;
+    } else {
+      rows.push({
+        y: vLine.y,
+        avgHeight: vLine.height,
+        blocks: [vLine]
+      });
+    }
+  }
+
+  rows.sort((a, b) => a.y - b.y);
+
+  return rows
+    .map((r) => {
+      r.blocks.sort((a, b) => a.x - b.x);
+      return r.blocks.map((b) => b.rawValue).join('   ');
+    })
+    .join('\n')
+    .trim();
+}
+
+/**
+ * Hitung skor kelengkapan hasil ekstraksi struk (untuk memilih hasil terbaik antara kanvas kontras vs asli)
+ */
+function scoreExtractedReceiptText(rawText) {
+  if (!rawText || !rawText.trim()) return 0;
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const items = extractReceiptItems(lines);
+  const total = extractReceiptTotal(lines, items);
+  return (total > 0 ? 100 : 0) + items.length * 25 + Math.min(lines.length, 30);
+}
+
+/**
+ * Ekstraksi Teks (OCR) dari Canvas / Blob Gambar Struk
+ * Mendukung mode Offline via Browser TextDetector API & Cached Tesseract WASM
+ */
+export async function extractTextFromReceiptImage(
+  canvasOrBlob,
+  onProgress = () => {},
+  secondaryCanvas = null
+) {
   if (!canvasOrBlob) return { text: '', engine: 'none' };
 
   if (canvasOrBlob.__simulatedReceiptText) {
@@ -489,71 +795,94 @@ export async function extractTextFromReceiptImage(canvasOrBlob, onProgress = () 
     };
   }
 
+  let bestText = '';
+  let bestScore = 0;
+  let bestEngine = 'Manual / Template';
+
+  // 1. Engine Utama: Browser TextDetector API (100% Offline di Chrome Android / ML Kit)
   if (typeof window !== 'undefined' && 'TextDetector' in window) {
     try {
-      onProgress('Mengekstrak teks via Browser TextDetector API...');
+      onProgress('Mengekstrak teks via Browser TextDetector API (Offline)...');
       // @ts-ignore
       const detector = new window.TextDetector();
-      const bitmap =
-        canvasOrBlob instanceof HTMLCanvasElement
-          ? canvasOrBlob
-          : await createImageBitmap(canvasOrBlob);
-      const detectedBlocks = await detector.detect(bitmap);
-      if (detectedBlocks && detectedBlocks.length > 0) {
-        // Urutkan berdasar Y, lalu kelompokkan blok yang sejajar secara horizontal (kolom kiri & kanan struk)
-        const sortedByY = [...detectedBlocks].sort(
-          (a, b) => (a.boundingBox?.y || 0) - (b.boundingBox?.y || 0)
-        );
-        const rows = [];
-        for (const block of sortedByY) {
-          const by = block.boundingBox?.y || 0;
-          const bh = block.boundingBox?.height || 18;
-          const lastRow = rows[rows.length - 1];
-          if (lastRow && Math.abs(by - lastRow.y) <= Math.max(10, bh * 0.55)) {
-            lastRow.blocks.push(block);
-          } else {
-            rows.push({ y: by, blocks: [block] });
-          }
-        }
-        const text = rows
-          .map((r) => {
-            r.blocks.sort((a, b) => (a.boundingBox?.x || 0) - (b.boundingBox?.x || 0));
-            return r.blocks.map((b) => b.rawValue).join('   ');
-          })
-          .join('\n');
-        if (text.trim()) {
-          return { text: text.trim(), engine: 'Browser TextDetector (Offline)' };
+      const targets = [canvasOrBlob, secondaryCanvas].filter(Boolean);
+
+      for (const target of targets) {
+        const bitmap =
+          target instanceof HTMLCanvasElement ? target : await createImageBitmap(target);
+        const detectedBlocks = await detector.detect(bitmap);
+        const candidateText = reconstructLinesFromDetectedBlocks(detectedBlocks);
+        const score = scoreExtractedReceiptText(candidateText);
+
+        if (score > bestScore || (!bestText && candidateText)) {
+          bestText = candidateText;
+          bestScore = score;
+          bestEngine = 'Browser TextDetector (Offline)';
         }
       }
+
+      // Jika TextDetector sudah berhasil mendapatkan nominal total yang valid, langsung kembalikan
+      if (bestScore >= 100) {
+        return { text: bestText, engine: bestEngine };
+      }
     } catch {
-      // Lanjut ke fallback berikutnya
+      // Lanjut ke fallback Tesseract WASM
     }
   }
 
-  if (typeof navigator !== 'undefined' && navigator.onLine) {
-    try {
-      onProgress('Memuat modul OCR (Tesseract WASM)...');
-      const tesseractPromise = (async () => {
-        const mod = await import(
-          /* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js'
-        );
-        const createWorker = mod.createWorker || mod.default?.createWorker;
-        if (!createWorker) return null;
-        const worker = await createWorker('ind+eng');
-        onProgress('Memindai baris angka & teks struk...');
-        const ret = await worker.recognize(canvasOrBlob);
-        await worker.terminate();
-        return ret?.data?.text || '';
-      })();
+  // 2. Engine Cadangan: Tesseract WASM (Bisa berjalan Offline setelah ter-cache oleh PWA Service Worker / IndexedDB)
+  try {
+    onProgress('Memuat modul OCR (Tesseract WASM)...');
+    const tesseractPromise = (async () => {
+      const mod = await import(
+        /* @vite-ignore */ 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js'
+      );
+      const createWorker = mod.createWorker || mod.default?.createWorker;
+      if (!createWorker) return '';
 
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 9000));
-      const ocrText = await Promise.race([tesseractPromise, timeoutPromise]);
-      if (ocrText && ocrText.trim()) {
+      const worker = await createWorker('ind+eng');
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: '6', // PSM 6: Pindai blok struk baris demi baris dari kiri ke kanan
+          preserve_interword_spaces: '1'
+        });
+      } catch {
+        // Abaikan jika parameter tidak didukung versi worker
+      }
+
+      onProgress('Memindai baris angka & teks struk...');
+      const ret = await worker.recognize(canvasOrBlob);
+      let candidateText = (ret?.data?.text || '').trim();
+      let candidateScore = scoreExtractedReceiptText(candidateText);
+
+      // Jika kanvas kontras belum mendapatkan nominal total dan ada kanvas asli, uji kanvas asli
+      if (candidateScore < 100 && secondaryCanvas) {
+        const retRaw = await worker.recognize(secondaryCanvas);
+        const rawText = (retRaw?.data?.text || '').trim();
+        const rawScore = scoreExtractedReceiptText(rawText);
+        if (rawScore > candidateScore) {
+          candidateText = rawText;
+        }
+      }
+
+      await worker.terminate();
+      return candidateText;
+    })();
+
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(''), 25000));
+    const ocrText = await Promise.race([tesseractPromise, timeoutPromise]);
+    if (ocrText && ocrText.trim()) {
+      const tessScore = scoreExtractedReceiptText(ocrText);
+      if (tessScore >= bestScore || !bestText) {
         return { text: ocrText.trim(), engine: 'Tesseract WASM OCR' };
       }
-    } catch {
-      // Abaikan jika offline atau diblokir CSP
     }
+  } catch {
+    // Abaikan jika benar-benar belum ter-cache saat offline pertama kali
+  }
+
+  if (bestText) {
+    return { text: bestText, engine: bestEngine };
   }
 
   return {

@@ -6,6 +6,7 @@
  */
 
 const MAX_DIMENSION_DEFAULT = 1000;
+const OCR_MAX_DIMENSION = 1600;
 const TARGET_MAX_BYTES = 80 * 1024; // 80 KB
 
 /**
@@ -19,7 +20,7 @@ function loadImageFromFile(file) {
       URL.revokeObjectURL(url);
       resolve(img);
     };
-    img.onerror = (err) => {
+    img.onerror = () => {
       URL.revokeObjectURL(url);
       reject(new Error('Gagal memuat file gambar. Pastikan format foto valid.'));
     };
@@ -43,31 +44,102 @@ function canvasToBlob(canvas, mimeType, quality) {
 }
 
 /**
- * Terapkan filter Grayscale & peningkatan kontras ringan agar teks struk tajam dan ukuran WebP lebih kecil
+ * Normalisasi iluminasi lokal (Integral Image Background Division) + peningkatan kontras.
+ * Sangat efektif menghilangkan bayangan gelap pada separuh struk (seperti foto struk di bawah bayangan HP)
+ * sekaligus menajamkan teks dot-matrix pudar tanpa merusak keterbacaan OCR.
  */
 function applyHighContrastGrayscale(ctx, width, height) {
   const imgData = ctx.getImageData(0, 0, width, height);
   const data = imgData.data;
-  const contrast = 1.28; // tingkatkan kontras 28%
-  const intercept = 128 * (1 - contrast);
+  const pixelCount = width * height;
+  const grayBuf = new Uint8Array(pixelCount);
 
-  for (let i = 0; i < data.length; i += 4) {
-    // Luminance standar
-    const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    let adjusted = gray * contrast + intercept;
-    if (adjusted < 0) adjusted = 0;
-    else if (adjusted > 255) adjusted = 255;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    grayBuf[p] = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+  }
 
-    data[i] = adjusted;
-    data[i + 1] = adjusted;
-    data[i + 2] = adjusted;
+  // Bangun Integral Image (Summed-Area Table) dalam O(W * H) untuk menghitung rata-rata terang lokal
+  const stride = width + 1;
+  const integral = new Uint32Array((width + 1) * (height + 1));
+
+  for (let y = 0; y < height; y++) {
+    let rowSum = 0;
+    const rowOffset = y * width;
+    const prevIntOffset = y * stride;
+    const currIntOffset = (y + 1) * stride;
+    for (let x = 0; x < width; x++) {
+      rowSum += grayBuf[rowOffset + x];
+      integral[currIntOffset + x + 1] = integral[prevIntOffset + x + 1] + rowSum;
+    }
+  }
+
+  // Radius jendela lokal adaptif (~1/16 dari dimensi terkecil)
+  const radius = Math.max(14, Math.round(Math.min(width, height) / 16));
+
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.max(0, y - radius);
+    const y1 = Math.min(height, y + radius + 1);
+    const rowOffset = y * width;
+    const iY0 = y0 * stride;
+    const iY1 = y1 * stride;
+
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(width, x + radius + 1);
+      const area = (x1 - x0) * (y1 - y0);
+
+      const sum =
+        integral[iY1 + x1] -
+        integral[iY0 + x1] -
+        integral[iY1 + x0] +
+        integral[iY0 + x0];
+
+      const localMean = Math.max(40, sum / area);
+      const gray = grayBuf[rowOffset + x];
+
+      // Rasio kecerahan piksel terhadap kertas di sekitarnya (menghilangkan efek bayangan)
+      const ratio = gray / localMean;
+
+      let adjusted;
+      if (ratio >= 0.93) {
+        // Area kertas (baik terang maupun di bawah bayangan) dibuat putih bersih
+        adjusted = Math.min(255, Math.round(242 + (ratio - 0.93) * 180));
+      } else {
+        // Area tinta teks dipertegas secara proporsional agar tetap halus (anti-aliased) untuk OCR
+        const norm = Math.max(0, (ratio - 0.42) / 0.51);
+        adjusted = Math.round(norm * norm * 225);
+      }
+
+      const idx = (rowOffset + x) * 4;
+      data[idx] = adjusted;
+      data[idx + 1] = adjusted;
+      data[idx + 2] = adjusted;
+    }
   }
 
   ctx.putImageData(imgData, 0, 0);
 }
 
 /**
- * Kompres file gambar struk menjadi WebP < 80 KB
+ * Hitung dimensi proporsional dengan batas maksimum
+ */
+function calcScaledDimensions(origW, origH, maxDim) {
+  let width = origW;
+  let height = origH;
+  if (width > maxDim || height > maxDim) {
+    if (width >= height) {
+      height = Math.round((height * maxDim) / width);
+      width = maxDim;
+    } else {
+      width = Math.round((width * maxDim) / height);
+      height = maxDim;
+    }
+  }
+  return { width, height };
+}
+
+/**
+ * Kompres file gambar struk menjadi WebP < 80 KB sekaligus menyiapkan kanvas resolusi tinggi untuk OCR
  * @param {File|Blob} file
  * @param {Object} options
  * @param {number} [options.maxDimension=1000]
@@ -81,7 +153,9 @@ function applyHighContrastGrayscale(ctx, width, height) {
  *   sizeKB: number,
  *   originalSizeKB: number,
  *   mimeType: string,
- *   canvas: HTMLCanvasElement
+ *   canvas: HTMLCanvasElement,
+ *   ocrCanvas: HTMLCanvasElement,
+ *   rawOcrCanvas: HTMLCanvasElement
  * }>}
  */
 export async function compressReceiptImage(
@@ -99,25 +173,34 @@ export async function compressReceiptImage(
   const originalSizeKB = Math.round((file.size / 1024) * 10) / 10;
   const img = await loadImageFromFile(file);
 
-  let width = img.naturalWidth || img.width;
-  let height = img.naturalHeight || img.height;
+  const origW = img.naturalWidth || img.width;
+  const origH = img.naturalHeight || img.height;
 
-  if (width > maxDimension || height > maxDimension) {
-    if (width >= height) {
-      height = Math.round((height * maxDimension) / width);
-      width = maxDimension;
-    } else {
-      width = Math.round((width * maxDimension) / height);
-      height = maxDimension;
-    }
-  }
+  // 1. Siapkan Kanvas khusus OCR pada resolusi lebih tinggi (maks 1600px) agar teks struk panjang tidak pecah
+  const ocrDim = calcScaledDimensions(origW, origH, OCR_MAX_DIMENSION);
+  const rawOcrCanvas = document.createElement('canvas');
+  rawOcrCanvas.width = ocrDim.width;
+  rawOcrCanvas.height = ocrDim.height;
+  const rawOcrCtx = rawOcrCanvas.getContext('2d');
+  rawOcrCtx.fillStyle = '#FFFFFF';
+  rawOcrCtx.fillRect(0, 0, ocrDim.width, ocrDim.height);
+  rawOcrCtx.drawImage(img, 0, 0, ocrDim.width, ocrDim.height);
+
+  const ocrCanvas = document.createElement('canvas');
+  ocrCanvas.width = ocrDim.width;
+  ocrCanvas.height = ocrDim.height;
+  const ocrCtx = ocrCanvas.getContext('2d', { willReadFrequently: true });
+  ocrCtx.drawImage(rawOcrCanvas, 0, 0);
+  applyHighContrastGrayscale(ocrCtx, ocrDim.width, ocrDim.height);
+
+  // 2. Siapkan Kanvas untuk penyimpanan WebP (< 80 KB)
+  let { width, height } = calcScaledDimensions(origW, origH, maxDimension);
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
 
   const ctx = canvas.getContext('2d', { willReadFrequently: highContrast });
-  // Latar putih untuk berjaga-jaga jika gambar PNG transparan
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(img, 0, 0, width, height);
@@ -144,7 +227,7 @@ export async function compressReceiptImage(
     blob = await canvasToBlob(canvas, mimeType, quality);
   }
 
-  // Jika pada resolusi 1000px masih >= 80 KB (misal foto sangat ramai), perkecil dimensi ke 800px lalu 650px
+  // Jika pada resolusi 1000px masih >= 80 KB, perkecil dimensi simpan (tanpa mengubah ocrCanvas)
   const scaleSteps = [0.8, 0.65];
   for (const scale of scaleSteps) {
     if (blob.size < TARGET_MAX_BYTES) break;
@@ -174,7 +257,9 @@ export async function compressReceiptImage(
     sizeKB,
     originalSizeKB,
     mimeType: blob?.type || mimeType,
-    canvas
+    canvas,
+    ocrCanvas,
+    rawOcrCanvas
   };
 }
 
