@@ -22,6 +22,57 @@ export function uuidv7() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * Hash 128-bit deterministik (cyrb128) — sinkron, tanpa WebCrypto (aman di http LAN)
+ */
+function cyrb128(str) {
+  let h1 = 1779033703, h2 = 3144134277, h3 = 1013904242, h4 = 2773480762;
+  for (let i = 0, k; i < str.length; i++) {
+    k = str.charCodeAt(i);
+    h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+    h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+    h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+    h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+  }
+  h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+  h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+  h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+  h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+  h1 ^= h2 ^ h3 ^ h4;
+  h2 ^= h1;
+  h3 ^= h1;
+  h4 ^= h1;
+  return [h1 >>> 0, h2 >>> 0, h3 >>> 0, h4 >>> 0];
+}
+
+/**
+ * UUID v7 deterministik: timestamp tetap + bit acak dari hash `key`.
+ * Dipakai untuk data default (seed) agar ID identik di semua perangkat.
+ */
+export function deterministicUuidV7(key, timestampMs) {
+  const bytes = new Uint8Array(16);
+  const words = cyrb128(String(key));
+  words.forEach((w, i) => {
+    bytes[i * 4] = (w >>> 24) & 0xff;
+    bytes[i * 4 + 1] = (w >>> 16) & 0xff;
+    bytes[i * 4 + 2] = (w >>> 8) & 0xff;
+    bytes[i * 4 + 3] = w & 0xff;
+  });
+
+  const timestamp = BigInt(Math.max(0, Math.floor(Number(timestampMs) || 0)));
+  bytes[0] = Number((timestamp >> 40n) & 0xffn);
+  bytes[1] = Number((timestamp >> 32n) & 0xffn);
+  bytes[2] = Number((timestamp >> 24n) & 0xffn);
+  bytes[3] = Number((timestamp >> 16n) & 0xffn);
+  bytes[4] = Number((timestamp >> 8n) & 0xffn);
+  bytes[5] = Number(timestamp & 0xffn);
+  bytes[6] = (bytes[6] & 0x0f) | 0x70;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 const idrFormatter = new Intl.NumberFormat('id-ID', {
   style: 'currency',
   currency: 'IDR',

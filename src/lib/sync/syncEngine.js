@@ -3,12 +3,15 @@
  *
  * Prinsip Kerja:
  * 1. 100% Offline-First: Semua aktivitas baca/tulis selalu ke IndexedDB lokal terlebih dahulu.
- * 2. Delta Push: Hanya mengirim baris lokal yang memiliki `sync_status = 'pending'`.
- * 3. Delta Pull: Hanya menarik baris remote yang memiliki `updated_at > last_synced_at`.
- * 4. Resolusi Konflik: Last-Write-Wins (LWW) berdasarkan `updated_at`.
+ * 2. Delta Pull: Hanya menarik baris remote yang memiliki `updated_at > last_synced_at` (cursor per user).
+ * 3. Dedupe: Gabungkan Dompet/Kategori duplikat (nama sama per buku) + remap referensi transaksi.
+ * 4. Delta Push: Hanya mengirim baris lokal yang memiliki `sync_status = 'pending'`.
+ * 5. Resolusi Konflik: Last-Write-Wins (LWW) berdasarkan `updated_at`.
+ *
+ * Urutan Pull -> Dedupe -> Push mencegah seed default perangkat baru menimpa / menggandakan data remote.
  */
 
-import { db } from '../db.js';
+import { db, dedupeAccountsAndCategories } from '../db.js';
 import { supabaseAdapter } from './supabaseAdapter.js';
 import { blobToSerializable, serializableToBlob } from '../utils/cryptoBackup.js';
 
@@ -87,7 +90,7 @@ class SyncEngine {
   }
 
   /**
-   * Jalankan Siklus Delta Sync Penuh (Push Pending Local -> Pull Remote Changes)
+   * Jalankan Siklus Delta Sync Penuh (Pull Remote -> Dedupe -> Push Pending Local)
    */
   async runSync({ forcePullAll = false } = {}) {
     if (this.isSyncing) {
@@ -115,13 +118,9 @@ class SyncEngine {
     this._notify();
 
     const syncStartTime = new Date().toISOString();
-    let totalPushed = 0;
-    let totalPulled = 0;
 
     try {
-      // -------------------------------------------------------------
-      // 1. PUSH: Pastikan 3 Workspaces Default Tersedia di Remote
-      // -------------------------------------------------------------
+      // 1. Pastikan 3 Workspaces Default Tersedia di Remote
       const localWorkspaces = await db.workspaces.toArray();
       const remoteWorkspacesPayload = localWorkspaces.map((w) => ({
         id: w.id,
@@ -132,225 +131,26 @@ class SyncEngine {
       }));
       await supabaseAdapter.pushBatch('workspaces', remoteWorkspacesPayload, userId);
 
-      // -------------------------------------------------------------
-      // 2. PUSH: Kirim Akun (Dompet) yang Berstatus 'pending'
-      // -------------------------------------------------------------
-      const pendingAccounts = await db.accounts.where('sync_status').equals('pending').toArray();
-      if (pendingAccounts.length > 0) {
-        const payload = pendingAccounts.map((a) => ({
-          id: a.id,
-          workspace_id: a.workspace_id,
-          name: a.name,
-          type: a.type || 'cash',
-          initial_balance: Number(a.initial_balance) || 0,
-          created_at: a.created_at || a.updated_at || syncStartTime,
-          updated_at: a.updated_at || syncStartTime,
-          deleted_at: a.deleted_at || null
-        }));
-        await supabaseAdapter.pushBatch('accounts', payload, userId);
-        await db.accounts.bulkUpdate(
-          pendingAccounts.map((a) => ({ key: a.id, changes: { sync_status: 'synced' } }))
-        );
-        totalPushed += pendingAccounts.length;
-      }
+      // 2. PULL lebih dulu agar versi remote (LWW) masuk sebelum dedupe & push
+      const lastSyncedAt = forcePullAll ? null : supabaseAdapter.getLastSyncedAt(userId);
+      const totalPulled = await this._pullAll(userId, lastSyncedAt);
 
-      // -------------------------------------------------------------
-      // 3. PUSH: Kirim Kategori yang Berstatus 'pending'
-      // -------------------------------------------------------------
-      const pendingCategories = await db.categories.where('sync_status').equals('pending').toArray();
-      if (pendingCategories.length > 0) {
-        const payload = pendingCategories.map((c) => ({
-          id: c.id,
-          workspace_id: c.workspace_id,
-          name: c.name,
-          type: c.type || 'expense',
-          keywords: c.keywords || '',
-          created_at: c.created_at || c.updated_at || syncStartTime,
-          updated_at: c.updated_at || syncStartTime,
-          deleted_at: c.deleted_at || null
-        }));
-        await supabaseAdapter.pushBatch('categories', payload, userId);
-        await db.categories.bulkUpdate(
-          pendingCategories.map((c) => ({ key: c.id, changes: { sync_status: 'synced' } }))
-        );
-        totalPushed += pendingCategories.length;
-      }
+      // 3. DEDUPE: gabungkan Dompet/Kategori kembar + remap transaksi ke ID kanonik
+      const { merged } = await dedupeAccountsAndCategories();
 
-      // -------------------------------------------------------------
-      // 4. PUSH: Kirim Transaksi yang Berstatus 'pending' (Termasuk serialisasi struk WebP)
-      // -------------------------------------------------------------
-      const pendingTxs = await db.transactions.where('sync_status').equals('pending').toArray();
-      if (pendingTxs.length > 0) {
-        const payload = await Promise.all(
-          pendingTxs.map(async (tx) => {
-            let attachmentData = null;
-            if (tx.attachment_blob instanceof Blob) {
-              attachmentData = await blobToSerializable(tx.attachment_blob);
-            }
-            return {
-              id: tx.id,
-              workspace_id: tx.workspace_id,
-              account_id: tx.account_id,
-              to_account_id: tx.to_account_id || null,
-              category_id: tx.category_id || null,
-              type: tx.type,
-              amount: Number(tx.amount) || 0,
-              date: tx.date || syncStartTime,
-              note: tx.note || '',
-              metadata: tx.metadata || {},
-              attachment_data: attachmentData,
-              created_at: tx.created_at || syncStartTime,
-              updated_at: tx.updated_at || syncStartTime,
-              deleted_at: tx.deleted_at || null
-            };
-          })
-        );
-        await supabaseAdapter.pushBatch('transactions', payload, userId);
-        await db.transactions.bulkUpdate(
-          pendingTxs.map((t) => ({ key: t.id, changes: { sync_status: 'synced' } }))
-        );
-        totalPushed += pendingTxs.length;
-      }
+      // 4. PUSH semua baris lokal berstatus 'pending'
+      const totalPushed = await this._pushPending(userId, syncStartTime);
 
-      // -------------------------------------------------------------
-      // 5. PUSH: Kirim Rincian Produk (transaction_items) yang 'pending'
-      // -------------------------------------------------------------
-      const pendingItems = await db.transaction_items.where('sync_status').equals('pending').toArray();
-      if (pendingItems.length > 0) {
-        const payload = pendingItems.map((it) => ({
-          id: it.id,
-          transaction_id: it.transaction_id,
-          workspace_id: it.workspace_id,
-          name: it.name,
-          amount: Number(it.amount) || 0,
-          sort_order: Number(it.sort_order) || 0,
-          created_at: it.created_at || syncStartTime,
-          updated_at: it.updated_at || syncStartTime,
-          deleted_at: it.deleted_at || null
-        }));
-        await supabaseAdapter.pushBatch('transaction_items', payload, userId);
-        await db.transaction_items.bulkUpdate(
-          pendingItems.map((it) => ({ key: it.id, changes: { sync_status: 'synced' } }))
-        );
-        totalPushed += pendingItems.length;
-      }
-
-      // =============================================================
-      // PULL: Delta Pull Perubahan dari Remote ke IndexedDB Lokal
-      // =============================================================
-      const lastSyncedAt = forcePullAll ? null : supabaseAdapter.getLastSyncedAt();
-
-      // Pull Accounts
-      const remoteAccounts = await supabaseAdapter.pullChanges('accounts', lastSyncedAt, userId);
-      for (const rAcc of remoteAccounts) {
-        const local = await db.accounts.get(rAcc.id);
-        const remoteTime = new Date(rAcc.updated_at).getTime();
-        const localTime = local ? new Date(local.updated_at).getTime() : 0;
-
-        if (!local || local.sync_status === 'synced' || remoteTime > localTime) {
-          await db.accounts.put({
-            id: rAcc.id,
-            workspace_id: rAcc.workspace_id,
-            name: rAcc.name,
-            type: rAcc.type,
-            initial_balance: Number(rAcc.initial_balance) || 0,
-            created_at: rAcc.created_at,
-            updated_at: rAcc.updated_at,
-            deleted_at: rAcc.deleted_at || null,
-            sync_status: 'synced'
-          });
-          totalPulled += 1;
-        }
-      }
-
-      // Pull Categories
-      const remoteCategories = await supabaseAdapter.pullChanges('categories', lastSyncedAt, userId);
-      for (const rCat of remoteCategories) {
-        const local = await db.categories.get(rCat.id);
-        const remoteTime = new Date(rCat.updated_at).getTime();
-        const localTime = local ? new Date(local.updated_at).getTime() : 0;
-
-        if (!local || local.sync_status === 'synced' || remoteTime > localTime) {
-          await db.categories.put({
-            id: rCat.id,
-            workspace_id: rCat.workspace_id,
-            name: rCat.name,
-            type: rCat.type,
-            keywords: rCat.keywords || '',
-            created_at: rCat.created_at,
-            updated_at: rCat.updated_at,
-            deleted_at: rCat.deleted_at || null,
-            sync_status: 'synced'
-          });
-          totalPulled += 1;
-        }
-      }
-
-      // Pull Transactions
-      const remoteTxs = await supabaseAdapter.pullChanges('transactions', lastSyncedAt, userId);
-      for (const rTx of remoteTxs) {
-        const local = await db.transactions.get(rTx.id);
-        const remoteTime = new Date(rTx.updated_at).getTime();
-        const localTime = local ? new Date(local.updated_at).getTime() : 0;
-
-        if (!local || local.sync_status === 'synced' || remoteTime > localTime) {
-          const blob = rTx.attachment_data
-            ? serializableToBlob(rTx.attachment_data)
-            : local?.attachment_blob || null;
-
-          await db.transactions.put({
-            id: rTx.id,
-            workspace_id: rTx.workspace_id,
-            account_id: rTx.account_id,
-            to_account_id: rTx.to_account_id || null,
-            category_id: rTx.category_id || null,
-            type: rTx.type,
-            amount: Number(rTx.amount) || 0,
-            date: rTx.date,
-            note: rTx.note || '',
-            metadata: rTx.metadata || {},
-            attachment_blob: blob,
-            created_at: rTx.created_at,
-            updated_at: rTx.updated_at,
-            deleted_at: rTx.deleted_at || null,
-            sync_status: 'synced'
-          });
-          totalPulled += 1;
-        }
-      }
-
-      // Pull Transaction Items
-      const remoteItems = await supabaseAdapter.pullChanges('transaction_items', lastSyncedAt, userId);
-      for (const rIt of remoteItems) {
-        const local = await db.transaction_items.get(rIt.id);
-        const remoteTime = new Date(rIt.updated_at).getTime();
-        const localTime = local ? new Date(local.updated_at).getTime() : 0;
-
-        if (!local || local.sync_status === 'synced' || remoteTime > localTime) {
-          await db.transaction_items.put({
-            id: rIt.id,
-            transaction_id: rIt.transaction_id,
-            workspace_id: rIt.workspace_id,
-            name: rIt.name,
-            amount: Number(rIt.amount) || 0,
-            sort_order: Number(rIt.sort_order) || 0,
-            created_at: rIt.created_at,
-            updated_at: rIt.updated_at,
-            deleted_at: rIt.deleted_at || null,
-            sync_status: 'synced'
-          });
-          totalPulled += 1;
-        }
-      }
-
-      supabaseAdapter.setLastSyncedAt(syncStartTime);
+      supabaseAdapter.setLastSyncedAt(syncStartTime, userId);
       this.lastError = null;
+      const mergedText = merged > 0 ? `, ${merged} duplikat digabung` : '';
       return {
         success: true,
         totalPushed,
         totalPulled,
+        totalMerged: merged,
         syncedAt: syncStartTime,
-        message: `Sinkronisasi sukses: ${totalPushed} dikirim, ${totalPulled} diterima.`
+        message: `Sinkronisasi sukses: ${totalPushed} dikirim, ${totalPulled} diterima${mergedText}.`
       };
     } catch (err) {
       console.error('Delta Sync Error:', err);
@@ -364,6 +164,193 @@ class SyncEngine {
       this.isSyncing = false;
       this._notify();
     }
+  }
+
+  async _pushPending(userId, syncStartTime) {
+    let totalPushed = 0;
+
+    // Akun (Dompet)
+    const pendingAccounts = await db.accounts.where('sync_status').equals('pending').toArray();
+    if (pendingAccounts.length > 0) {
+      const payload = pendingAccounts.map((a) => ({
+        id: a.id,
+        workspace_id: a.workspace_id,
+        name: a.name,
+        type: a.type || 'cash',
+        initial_balance: Number(a.initial_balance) || 0,
+        merged_into: a.merged_into || null,
+        created_at: a.created_at || a.updated_at || syncStartTime,
+        updated_at: a.updated_at || syncStartTime,
+        deleted_at: a.deleted_at || null
+      }));
+      await supabaseAdapter.pushBatch('accounts', payload, userId);
+      await db.accounts.bulkUpdate(
+        pendingAccounts.map((a) => ({ key: a.id, changes: { sync_status: 'synced' } }))
+      );
+      totalPushed += pendingAccounts.length;
+    }
+
+    // Kategori
+    const pendingCategories = await db.categories.where('sync_status').equals('pending').toArray();
+    if (pendingCategories.length > 0) {
+      const payload = pendingCategories.map((c) => ({
+        id: c.id,
+        workspace_id: c.workspace_id,
+        name: c.name,
+        type: c.type || 'expense',
+        keywords: c.keywords || '',
+        merged_into: c.merged_into || null,
+        created_at: c.created_at || c.updated_at || syncStartTime,
+        updated_at: c.updated_at || syncStartTime,
+        deleted_at: c.deleted_at || null
+      }));
+      await supabaseAdapter.pushBatch('categories', payload, userId);
+      await db.categories.bulkUpdate(
+        pendingCategories.map((c) => ({ key: c.id, changes: { sync_status: 'synced' } }))
+      );
+      totalPushed += pendingCategories.length;
+    }
+
+    // Transaksi (termasuk serialisasi struk WebP)
+    const pendingTxs = await db.transactions.where('sync_status').equals('pending').toArray();
+    if (pendingTxs.length > 0) {
+      const payload = await Promise.all(
+        pendingTxs.map(async (tx) => {
+          let attachmentData = null;
+          if (tx.attachment_blob instanceof Blob) {
+            attachmentData = await blobToSerializable(tx.attachment_blob);
+          }
+          return {
+            id: tx.id,
+            workspace_id: tx.workspace_id,
+            account_id: tx.account_id,
+            to_account_id: tx.to_account_id || null,
+            category_id: tx.category_id || null,
+            type: tx.type,
+            amount: Number(tx.amount) || 0,
+            date: tx.date || syncStartTime,
+            note: tx.note || '',
+            metadata: tx.metadata || {},
+            attachment_data: attachmentData,
+            created_at: tx.created_at || syncStartTime,
+            updated_at: tx.updated_at || syncStartTime,
+            deleted_at: tx.deleted_at || null
+          };
+        })
+      );
+      await supabaseAdapter.pushBatch('transactions', payload, userId);
+      await db.transactions.bulkUpdate(
+        pendingTxs.map((t) => ({ key: t.id, changes: { sync_status: 'synced' } }))
+      );
+      totalPushed += pendingTxs.length;
+    }
+
+    // Rincian Produk (transaction_items)
+    const pendingItems = await db.transaction_items.where('sync_status').equals('pending').toArray();
+    if (pendingItems.length > 0) {
+      const payload = pendingItems.map((it) => ({
+        id: it.id,
+        transaction_id: it.transaction_id,
+        workspace_id: it.workspace_id,
+        name: it.name,
+        amount: Number(it.amount) || 0,
+        sort_order: Number(it.sort_order) || 0,
+        created_at: it.created_at || syncStartTime,
+        updated_at: it.updated_at || syncStartTime,
+        deleted_at: it.deleted_at || null
+      }));
+      await supabaseAdapter.pushBatch('transaction_items', payload, userId);
+      await db.transaction_items.bulkUpdate(
+        pendingItems.map((it) => ({ key: it.id, changes: { sync_status: 'synced' } }))
+      );
+      totalPushed += pendingItems.length;
+    }
+
+    return totalPushed;
+  }
+
+  /**
+   * Terapkan baris remote ke tabel lokal dengan aturan LWW.
+   * Lokal ditimpa jika: belum ada, sudah 'synced', atau remote lebih baru.
+   */
+  async _applyRemote(table, remoteRows, mapRow) {
+    let applied = 0;
+    for (const r of remoteRows) {
+      const local = await table.get(r.id);
+      const remoteTime = new Date(r.updated_at).getTime();
+      const localTime = local ? new Date(local.updated_at).getTime() : 0;
+
+      if (!local || local.sync_status === 'synced' || remoteTime > localTime) {
+        await table.put({ ...mapRow(r, local), sync_status: 'synced' });
+        applied += 1;
+      }
+    }
+    return applied;
+  }
+
+  async _pullAll(userId, lastSyncedAt) {
+    let totalPulled = 0;
+
+    const remoteAccounts = await supabaseAdapter.pullChanges('accounts', lastSyncedAt, userId);
+    totalPulled += await this._applyRemote(db.accounts, remoteAccounts, (r) => ({
+      id: r.id,
+      workspace_id: r.workspace_id,
+      name: r.name,
+      type: r.type,
+      initial_balance: Number(r.initial_balance) || 0,
+      merged_into: r.merged_into || null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      deleted_at: r.deleted_at || null
+    }));
+
+    const remoteCategories = await supabaseAdapter.pullChanges('categories', lastSyncedAt, userId);
+    totalPulled += await this._applyRemote(db.categories, remoteCategories, (r) => ({
+      id: r.id,
+      workspace_id: r.workspace_id,
+      name: r.name,
+      type: r.type,
+      keywords: r.keywords || '',
+      merged_into: r.merged_into || null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      deleted_at: r.deleted_at || null
+    }));
+
+    const remoteTxs = await supabaseAdapter.pullChanges('transactions', lastSyncedAt, userId);
+    totalPulled += await this._applyRemote(db.transactions, remoteTxs, (r, local) => ({
+      id: r.id,
+      workspace_id: r.workspace_id,
+      account_id: r.account_id,
+      to_account_id: r.to_account_id || null,
+      category_id: r.category_id || null,
+      type: r.type,
+      amount: Number(r.amount) || 0,
+      date: r.date,
+      note: r.note || '',
+      metadata: r.metadata || {},
+      attachment_blob: r.attachment_data
+        ? serializableToBlob(r.attachment_data)
+        : local?.attachment_blob || null,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      deleted_at: r.deleted_at || null
+    }));
+
+    const remoteItems = await supabaseAdapter.pullChanges('transaction_items', lastSyncedAt, userId);
+    totalPulled += await this._applyRemote(db.transaction_items, remoteItems, (r) => ({
+      id: r.id,
+      transaction_id: r.transaction_id,
+      workspace_id: r.workspace_id,
+      name: r.name,
+      amount: Number(r.amount) || 0,
+      sort_order: Number(r.sort_order) || 0,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      deleted_at: r.deleted_at || null
+    }));
+
+    return totalPulled;
   }
 
   startAutoSyncInterval(intervalMs = 60000) {
@@ -385,4 +372,3 @@ class SyncEngine {
 }
 
 export const syncEngine = new SyncEngine();
-

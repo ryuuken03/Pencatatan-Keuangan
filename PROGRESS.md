@@ -84,6 +84,7 @@ Gunakan prompt di bawah ini satu per satu pada setiap sesi pengerjaan.
 - [x] File SQL Migration (`supabase/schema.sql`) berisi tabel PostgreSQL (`workspaces`, `accounts`, `categories`, `transactions`, `transaction_items`) + kebijakan Row Level Security (RLS).
 - [x] Implementasi `SyncEngine` & `SupabaseAdapter`: hanya mengirim data `sync_status = 'pending'` dan menarik data berdasarkan `updated_at` terakhir (Delta Sync).
 - [x] Modal Pengaturan Sync (`SyncSettingsModal.svelte`: Konfigurasi otomatis via `.env`, alur pendaftaran hemat kuota tanpa konfirmasi email, tampilan bersih hanya Logout & Sinkronisasi saat sesi aktif) serta indikator status sync di Header Desktop & Mobile.
+- [x] Anti-duplikat Dompet/Kategori lintas perangkat: seed default ber-ID UUID v7 deterministik, urutan sync Pull → Dedupe → Push, merge duplikat (`merged_into`) + remap referensi transaksi, cursor sync per user, paginasi pull > 1000 baris (migrasi `supabase/migrations/20261103_merged_into.sql`).
 
 #### 📋 Prompt Fase 2:
 ```text

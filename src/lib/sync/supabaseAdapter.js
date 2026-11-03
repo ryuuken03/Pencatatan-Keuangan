@@ -52,7 +52,7 @@ export class SupabaseAdapter {
       isAuthenticated: this.isAuthenticated(),
       user: this.user,
       autoSync: localStorage.getItem(STORAGE_KEYS.AUTO_SYNC) === 'true',
-      lastSyncedAt: localStorage.getItem(STORAGE_KEYS.LAST_SYNC) || null
+      lastSyncedAt: this.getLastSyncedAt()
     };
   }
 
@@ -62,12 +62,20 @@ export class SupabaseAdapter {
     }
   }
 
-  setLastSyncedAt(timestamp) {
-    localStorage.setItem(STORAGE_KEYS.LAST_SYNC, timestamp);
+  // Cursor delta-pull dipisah per user agar login akun lain / akun sama di sesi baru tetap full-pull sekali
+  _lastSyncKey(userId) {
+    const uid = userId || this.user?.id;
+    return uid ? `${STORAGE_KEYS.LAST_SYNC}:${uid}` : null;
   }
 
-  getLastSyncedAt() {
-    return localStorage.getItem(STORAGE_KEYS.LAST_SYNC);
+  setLastSyncedAt(timestamp, userId) {
+    const key = this._lastSyncKey(userId);
+    if (key) localStorage.setItem(key, timestamp);
+  }
+
+  getLastSyncedAt(userId) {
+    const key = this._lastSyncKey(userId);
+    return key ? localStorage.getItem(key) : null;
   }
 
   _saveAuthSession(session) {
@@ -270,34 +278,46 @@ export class SupabaseAdapter {
     await this.ensureValidToken();
     const authToken = this.token || this.anonKey;
 
-    let query = `user_id=eq.${userId}&order=updated_at.asc&limit=1000`;
-    if (sinceTimestamp) {
-      query += `&updated_at=gt.${encodeURIComponent(sinceTimestamp)}`;
+    const PAGE_SIZE = 1000;
+    const all = [];
+    let offset = 0;
+
+    // Paginasi agar data > 1000 baris tetap tertarik semua
+    while (true) {
+      let query = `user_id=eq.${userId}&order=updated_at.asc,id.asc&limit=${PAGE_SIZE}&offset=${offset}`;
+      if (sinceTimestamp) {
+        query += `&updated_at=gt.${encodeURIComponent(sinceTimestamp)}`;
+      }
+
+      const endpoint = `${this.url}/rest/v1/${tableName}?${query}`;
+      const res = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          apikey: this.anonKey,
+          Authorization: `Bearer ${authToken}`,
+          Accept: 'application/json'
+        }
+      });
+
+      if (!res.ok) {
+        let errMsg = `HTTP ${res.status}`;
+        try {
+          const errObj = await res.json();
+          errMsg = errObj.message || errObj.hint || errMsg;
+        } catch {
+          errMsg = await res.text();
+        }
+        throw new Error(`Gagal pull dari tabel '${tableName}': ${errMsg}`);
+      }
+
+      const items = await res.json();
+      const page = Array.isArray(items) ? items : [];
+      all.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
     }
 
-    const endpoint = `${this.url}/rest/v1/${tableName}?${query}`;
-    const res = await fetch(endpoint, {
-      method: 'GET',
-      headers: {
-        apikey: this.anonKey,
-        Authorization: `Bearer ${authToken}`,
-        Accept: 'application/json'
-      }
-    });
-
-    if (!res.ok) {
-      let errMsg = `HTTP ${res.status}`;
-      try {
-        const errObj = await res.json();
-        errMsg = errObj.message || errObj.hint || errMsg;
-      } catch {
-        errMsg = await res.text();
-      }
-      throw new Error(`Gagal pull dari tabel '${tableName}': ${errMsg}`);
-    }
-
-    const items = await res.json();
-    return Array.isArray(items) ? items : [];
+    return all;
   }
 }
 

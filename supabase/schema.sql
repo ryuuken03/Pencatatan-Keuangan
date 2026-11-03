@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS public.accounts (
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'cash', -- 'cash' | 'bank' | 'ewallet'
     initial_balance BIGINT NOT NULL DEFAULT 0, -- Disimpan dalam satuan Rupiah bulat
+    merged_into TEXT, -- ID kanonik bila baris ini hasil merge duplikat (soft delete)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ,
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS public.categories (
     name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'expense', -- 'income' | 'expense'
     keywords TEXT DEFAULT '',
+    merged_into TEXT, -- ID kanonik bila baris ini hasil merge duplikat (soft delete)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ,
@@ -90,6 +92,10 @@ CREATE TABLE IF NOT EXISTS public.transaction_items (
 -- ==============================================================================
 -- 3. INDEX UNTUK PERFORMA DELTA SYNC (HEMAT BATERAI & KUOTA)
 -- ==============================================================================
+
+-- Migrasi untuk database lama (aman dijalankan berulang)
+ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS merged_into TEXT;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS merged_into TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_user_updated ON public.workspaces (user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_accounts_user_updated ON public.accounts (user_id, updated_at DESC);
