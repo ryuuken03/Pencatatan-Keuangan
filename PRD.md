@@ -34,7 +34,7 @@ Membangun aplikasi pencatatan keuangan yang **sangat ringan, aman, responsif (HP
      - **Bottom Navigation Bar 3-Kolom (Ikon di atas, Teks `10px` di bawah):**
        1. `WorkspaceSwitcher` (*Buku Pribadi* | *Buku Usaha* | *Kopdes*) dengan pop-up *bottom sheet* ringkasan saldo tiap buku.
        2. `Catat Transaksi` dengan pop-up *bottom sheet* 3 metode input (*Tambah Transaksi*, *Foto*, *Record Voice*).
-       3. `Pengaturan` dengan pop-up *bottom sheet* 4 menu (*Laporan & Excel*, *Back Up & PIN*, *Kategori*, *Dompet*).
+       3. `Pengaturan` dengan pop-up *bottom sheet* 5 menu (*Sinkronisasi Cloud*, *Laporan & Excel*, *Back Up & PIN*, *Kategori*, *Dompet*).
    - **Desktop/Laptop View ($\ge$ 768px):** Header horizontal (*Segmented Workspace Switcher* & deretan tombol aksi), tampilan *Spreadsheet/Table View* dengan filter lanjutan multi-kolom, rekap cepat per kategori/unit, serta fitur **Export & Import Excel (`.xlsx` Multi-Sheet)**.
 
 ---
@@ -141,20 +141,22 @@ Setiap entitas data di **Dexie.js (IndexedDB)** dirancang identik dengan skema *
 - `currency` (Default: `'IDR'`)
 
 #### B. Tabel `accounts` (Dompet / Rekening Kas)
-- `id` (UUID v7)
+- `id` (UUID v7 — deterministik untuk 7 dompet bawaan)
 - `workspace_id` (`'personal'` | `'business'` | `'kopdes'`)
 - `name` (Contoh: `'Kas Kecil Kopdes'`, `'BRI Kopdes'`, `'Dompet Pribadi'`)
 - `type` (`'cash'` | `'bank'` | `'ewallet'`)
-- `initial_balance` (Integer - disimpan dalam satuan Rupiah bulat tanpa pecahan desimal floating-point agar akurat)
-- `updated_at`, `deleted_at`, `sync_status`
+- `initial_balance` (Integer - disimpan dalam satuan Rupiah bulat tanpa pecahan desimal floating-point; default seluruh dompet bawaan saat pertama kali dijalankan adalah **`0`** / `Rp 0`)
+- `merged_into` (Nullable - ID kanonik jika baris ini merupakan duplikat yang telah digabung lintas perangkat)
+- `created_at`, `updated_at`, `deleted_at`, `sync_status`
 
 #### C. Tabel `categories` (Kategori)
-- `id` (UUID v7)
+- `id` (UUID v7 — deterministik untuk kategori bawaan)
 - `workspace_id`
 - `name` (Contoh: `'ATK & Fotokopi'`, `'Setoran Unit Toko'`)
 - `type` (`'income'` | `'expense'`)
 - `keywords` (String kata kunci opsional untuk auto-kategori cerdas)
-- `updated_at`, `deleted_at`, `sync_status`
+- `merged_into` (Nullable - ID kanonik jika baris ini merupakan duplikat yang telah digabung lintas perangkat)
+- `created_at`, `updated_at`, `deleted_at`, `sync_status`
 
 #### D. Tabel `transactions` (Transaksi Utama)
 - `id` (UUID v7)
@@ -185,6 +187,15 @@ Setiap entitas data di **Dexie.js (IndexedDB)** dirancang identik dengan skema *
 - `amount` (Integer positif Rupiah bulat)
 - `sort_order` (Integer urutan baris)
 - `created_at`, `updated_at`, `deleted_at`, `sync_status`
+
+### 5.2. Mekanisme Auto-Sync Dua Arah & Anti-Duplikat (`SyncEngine`)
+1. **Urutan Siklus `Pull` $\rightarrow$ `Dedupe` $\rightarrow$ `Push`:**
+   - Menarik perubahan remote terlebih dahulu (`_pullAll` dengan *buffer clock-skew* 60 detik dan paginasi `1000` baris per halaman), menggabungkan dompet/kategori kembar (`dedupeAccountsAndCategories` via `merged_into` + remap referensi transaksi), lalu mengirim antrean `pending` lokal (`_pushPending`).
+   - Resolusi konflik menggunakan **Last-Write-Wins (LWW)** berdasarkan `updated_at`. Seed default menggunakan `SEED_EPOCH_ISO` (`2024-01-01T00:00:00.000Z`) sehingga selalu kalah dari perubahan hasil edit pengguna.
+2. **Auto-Push (Offline $\rightarrow$ Online):**
+   - Perubahan lokal (`sync_status = 'pending'`) dideteksi otomatis menggunakan Dexie `liveQuery` dan langsung di-push ke cloud setelah *debounce* `2 detik` saat online, atau otomatis dikirim begitu koneksi internet kembali menyala (`window.online`).
+3. **Auto-Pull (Online $\rightarrow$ Offline):**
+   - Menarik data dari cloud secara otomatis saat aplikasi dibuka (`startup`), sesaat setelah login, saat berpindah kembali ke tab aplikasi (`visibilitychange`), dan setiap `30 detik` ketika tab aktif, diikuti *auto-refresh* state UI secara reaktif.
 
 ---
 
@@ -219,8 +230,10 @@ Setiap entitas data di **Dexie.js (IndexedDB)** dirancang identik dengan skema *
 ### Fase 2: Cloud Database Sync (Supabase) (Selesai 100%)
 - [x] Menambahkan `SupabaseAdapter` native zero-bloat via browser `fetch` (PostgREST & GoTrue Auth).
 - [x] Sinkronisasi latar belakang (*Background Sync*): Hanya mengirim baris dengan `sync_status = 'pending'` dan menarik perubahan terbaru berdasarkan `updated_at` (*Delta Sync* hemat kuota & baterai).
-- [x] Skema database PostgreSQL + Penerapan *Row Level Security (RLS)* di `supabase/schema.sql` (1:1 dengan Dexie v2 termasuk `transaction_items`).
-- [x] Modal Pengaturan Sinkronisasi (`SyncSettingsModal.svelte`: Konfigurasi otomatis via `.env`, alur pendaftaran hemat kuota tanpa konfirmasi email, tampilan bersih hanya Logout & Sinkronisasi saat aktif), indikator status sync di Header Desktop & Mobile, serta auto-sync saat online.
+- [x] Skema database PostgreSQL + Penerapan *Row Level Security (RLS)* di `supabase/schema.sql` (1:1 dengan Dexie v2 termasuk `transaction_items` dan `merged_into`).
+- [x] Modal Pengaturan Sinkronisasi (`SyncSettingsModal.svelte`: Konfigurasi otomatis via `.env`, alur pendaftaran hemat kuota tanpa konfirmasi email, tampilan bersih hanya Logout & Sinkronisasi saat aktif) serta indikator status sync di Header Desktop & Mobile.
+- [x] Anti-duplikat Dompet/Kategori lintas perangkat (seed UUID v7 deterministik dengan saldo awal seluruh kas default `Rp 0`, siklus `Pull` $\rightarrow$ `Dedupe` $\rightarrow$ `Push`, dan remap referensi transaksi).
+- [x] Auto-Sync Dua Arah (Push Offline $\rightarrow$ Online via Dexie `liveQuery` + `window.online` & Pull Online $\rightarrow$ Offline saat startup, login, `visibilitychange`, dan polling 30 detik disertai *auto-refresh* UI).
 
 ### Fase 3: Migrasi ke Home Server (Laptop Intel Celeron, RAM 4GB, SSD 128GB)
 - [ ] Pembuatan Backend REST API super ringan dengan **Go (Golang)** + **SQLite (WAL Mode) / PostgreSQL**.

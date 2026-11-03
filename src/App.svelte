@@ -48,6 +48,7 @@
   });
   let isSyncModalOpen = $state(false);
   let unsubscribeSync = null;
+  let unsubscribeSyncData = null;
 
   // Modal states
   let isTxModalOpen = $state(false);
@@ -76,14 +77,18 @@
     unsubscribeSync = syncEngine.subscribe((state) => {
       syncState = state;
     });
-    syncEngine.startAutoSyncInterval(60000);
+    unsubscribeSyncData = syncEngine.onDataChange(() => {
+      refreshData();
+    });
+    syncEngine.start();
 
     isReady = true;
   });
 
   onDestroy(() => {
     if (unsubscribeSync) unsubscribeSync();
-    syncEngine.stopAutoSyncInterval();
+    if (unsubscribeSyncData) unsubscribeSyncData();
+    syncEngine.stop();
   });
 
   // Lookup Maps

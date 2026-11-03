@@ -42,7 +42,7 @@ Gunakan prompt di bawah ini satu per satu pada setiap sesi pengerjaan.
 
 #### Checklist Modul 1A:
 - [x] Inisialisasi project `Svelte 5 + Vite + Tailwind CSS` di direktori workspace.
-- [x] Setup `src/lib/db.js` (Dexie.js) sesuai skema Bagian 5 `PRD.md` + Seed data awal (`workspaces`, `accounts`, `categories` untuk Pribadi, Usaha, dan Kopdes) serta tabel terpisah `transaction_items` (0..N item produk per transaksi).
+- [x] Setup `src/lib/db.js` (Dexie.js) sesuai skema Bagian 5 `PRD.md` + Seed data awal ber-ID UUID v7 deterministik (`workspaces`, `accounts` dengan saldo awal seluruh kas `Rp 0`, serta `categories` untuk Pribadi, Usaha, dan Kopdes) dan tabel terpisah `transaction_items` (0..N item produk per transaksi).
 - [x] Utilitas `UUID v7`, format Rupiah (`Intl.NumberFormat`), dan evaluasi matematika nominal (`25000+15000`).
 - [x] Header `WorkspaceSwitcher` (`Pribadi` | `Usaha` | `Kopdes`) dengan tema warna solid per buku kas (Indigo, Teal, Emerald — tanpa gradient) + Hero Balance Card (dengan modal *Lihat Detail* saldo dompet) & Kartu Metrik.
 - [x] Komponen `TransactionForm` (Form CRUD Utama) dengan input nominal auto-format ribuan, tombol pecahan cepat (`+10rb`, `+50rb`, `+100rb`), kalkulator mini, Smart Picker Dompet/Kategori hemat ruang, atribut khusus Kopdes (`unit_usaha`, `no_bukti`, `pic_pihak`), dan toggle Dana Talangan/Reimburse.
@@ -84,7 +84,8 @@ Gunakan prompt di bawah ini satu per satu pada setiap sesi pengerjaan.
 - [x] File SQL Migration (`supabase/schema.sql`) berisi tabel PostgreSQL (`workspaces`, `accounts`, `categories`, `transactions`, `transaction_items`) + kebijakan Row Level Security (RLS).
 - [x] Implementasi `SyncEngine` & `SupabaseAdapter`: hanya mengirim data `sync_status = 'pending'` dan menarik data berdasarkan `updated_at` terakhir (Delta Sync).
 - [x] Modal Pengaturan Sync (`SyncSettingsModal.svelte`: Konfigurasi otomatis via `.env`, alur pendaftaran hemat kuota tanpa konfirmasi email, tampilan bersih hanya Logout & Sinkronisasi saat sesi aktif) serta indikator status sync di Header Desktop & Mobile.
-- [x] Anti-duplikat Dompet/Kategori lintas perangkat: seed default ber-ID UUID v7 deterministik, urutan sync Pull → Dedupe → Push, merge duplikat (`merged_into`) + remap referensi transaksi, cursor sync per user, paginasi pull > 1000 baris (migrasi `supabase/migrations/20261103_merged_into.sql`).
+- [x] Anti-duplikat Dompet/Kategori lintas perangkat: seed default ber-ID UUID v7 deterministik (saldo awal seluruh kas default `Rp 0`), urutan sync Pull → Dedupe → Push, merge duplikat (`merged_into`) + remap referensi transaksi, cursor sync per user, paginasi pull > 1000 baris (migrasi `supabase/migrations/20261103_merged_into.sql`).
+- [x] Auto-Sync Dua Arah (Push Offline $\rightarrow$ Online & Pull Online $\rightarrow$ Offline): deteksi otomatis perubahan lokal via Dexie `liveQuery` (debounce 2 detik), re-sync otomatis saat kembali online (`window.online`), saat login, saat pindah tab (`visibilitychange`), dan polling berkala 30 detik dengan auto-refresh UI reaktif.
 
 #### 📋 Prompt Fase 2:
 ```text

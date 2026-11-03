@@ -26,17 +26,17 @@
   });
 
   let isUserLoggedIn = $derived(
-    Boolean(syncState.isAuthenticated || syncState.user?.id || supabaseAdapter.isAuthenticated())
+    Boolean(
+      syncState.isAuthenticated ||
+        syncState.user?.id ||
+        supabaseAdapter.isAuthenticated(),
+    ),
   );
-  let currentUser = $derived(
-    syncState.user || supabaseAdapter.getUser()
-  );
+  let currentUser = $derived(syncState.user || supabaseAdapter.getUser());
   let isSupabaseConfigured = $derived(
-    Boolean(syncState.isConfigured || supabaseAdapter.isConfigured())
+    Boolean(syncState.isConfigured || supabaseAdapter.isConfigured()),
   );
-  let supabaseProjectUrl = $derived(
-    supabaseAdapter.url
-  );
+  let supabaseProjectUrl = $derived(supabaseAdapter.url);
 
   let inputAutoSync = $state(true);
 
@@ -113,6 +113,9 @@
   function handleAutoSyncChange() {
     supabaseAdapter.saveConfig({ autoSync: inputAutoSync });
     syncEngine.notify();
+    if (inputAutoSync) {
+      handleRunSync(false);
+    }
   }
 
   async function handleTestConnection() {
@@ -173,11 +176,15 @@
           user: session?.user || supabaseAdapter.getUser(),
           userEmail: session?.user?.email || inputEmail,
         };
-        actionFeedback = {
-          type: "success",
-          message: "Login berhasil! Sesi sinkronisasi aktif.",
-        };
         syncEngine.notify();
+        if (supabaseAdapter.getConfig().autoSync) {
+          await handleRunSync(false);
+        } else {
+          actionFeedback = {
+            type: "success",
+            message: "Login berhasil! Sesi sinkronisasi aktif.",
+          };
+        }
       }
     } catch (err) {
       actionFeedback = {
@@ -201,7 +208,7 @@
       };
       actionFeedback = {
         type: "success",
-        message: "Berhasil keluar (logout) dari Supabase.",
+        message: "Berhasil keluar Akun.",
       };
       syncEngine.notify();
     } catch (err) {
@@ -269,11 +276,11 @@
             <h2
               class="text-sm sm:text-base font-extrabold uppercase tracking-wide"
             >
-              Sinkronisasi Cloud (Supabase)
+              Sinkronisasi
             </h2>
-            <p class="text-[11px] text-white/75">
+            <!-- <p class="text-[11px] text-white/75">
               Delta Sync aman berbasis PostgreSQL & Row Level Security (RLS)
-            </p>
+            </p> -->
           </div>
         </div>
         <button
@@ -329,18 +336,18 @@
                 <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
                 <span
                   class="text-[10px] font-extrabold uppercase tracking-wider text-slate-500"
-                  >Akun Cloud Aktif</span
+                  >Online</span
                 >
               </div>
-              <div class="font-extrabold text-sm text-slate-900 truncate">
+              <div class="font-bold text-xs text-slate-900 truncate">
                 {currentUser?.email || "Akun Supabase"}
               </div>
               {#if currentUser?.id}
-                <div
+                <!-- <div
                   class="text-[10px] text-slate-400 font-mono truncate max-w-[240px]"
                 >
                   UID: {currentUser.id}
-                </div>
+                </div> -->
               {/if}
             </div>
             <button
@@ -348,7 +355,7 @@
               onclick={handleSignOut}
               class="px-3 py-1.5 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 rounded-lg cursor-pointer transition-colors shrink-0"
             >
-              Keluar (Logout)
+              Keluar
             </button>
           </div>
 
@@ -359,7 +366,7 @@
             <div class="flex items-center justify-between">
               <span
                 class="text-[11px] font-extrabold uppercase tracking-wider text-slate-500"
-                >Antrean Perubahan Lokal (Delta)</span
+                >Antrean Perubahan Lokal</span
               >
               <span class="font-extrabold text-slate-700 tabular-nums">
                 {syncState.totalPending} pending
@@ -468,7 +475,7 @@
                     stroke-linejoin="round"
                   />
                 </svg>
-                <span>Sinkronkan Sekarang (Delta Sync)</span>
+                <span>Sinkronkan Sekarang</span>
               {/if}
             </button>
 
@@ -478,7 +485,7 @@
               disabled={syncState.isSyncing}
               class="w-full py-1.5 text-[11px] font-bold text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 rounded-lg border border-slate-200 cursor-pointer transition-colors"
             >
-              Tarik Ulang Semua Data Remote (Full Pull)
+              Tarik Ulang Semua Data
             </button>
           </div>
         {:else}

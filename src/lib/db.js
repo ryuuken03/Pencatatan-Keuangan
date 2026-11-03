@@ -68,15 +68,15 @@ export const KOPDES_UNITS = [
 
 export const DEFAULT_ACCOUNTS = [
   // Pribadi
-  { workspace_id: 'personal', name: 'Dompet Tunai', type: 'cash', initial_balance: 500000 },
-  { workspace_id: 'personal', name: 'Bank Pribadi', type: 'bank', initial_balance: 5000000 },
-  { workspace_id: 'personal', name: 'E-Wallet', type: 'ewallet', initial_balance: 250000 },
+  { workspace_id: 'personal', name: 'Dompet Tunai', type: 'cash', initial_balance: 0 },
+  { workspace_id: 'personal', name: 'Bank Pribadi', type: 'bank', initial_balance: 0 },
+  { workspace_id: 'personal', name: 'E-Wallet', type: 'ewallet', initial_balance: 0 },
   // Usaha
-  { workspace_id: 'business', name: 'Kas Tunai Usaha', type: 'cash', initial_balance: 1500000 },
-  { workspace_id: 'business', name: 'Rekening Usaha', type: 'bank', initial_balance: 10000000 },
+  { workspace_id: 'business', name: 'Kas Tunai Usaha', type: 'cash', initial_balance: 0 },
+  { workspace_id: 'business', name: 'Rekening Usaha', type: 'bank', initial_balance: 0 },
   // Kopdes
-  { workspace_id: 'kopdes', name: 'Kas Kecil Kopdes', type: 'cash', initial_balance: 2000000 },
-  { workspace_id: 'kopdes', name: 'BRI Kopdes', type: 'bank', initial_balance: 25000000 }
+  { workspace_id: 'kopdes', name: 'Kas Kecil Kopdes', type: 'cash', initial_balance: 0 },
+  { workspace_id: 'kopdes', name: 'BRI Kopdes', type: 'bank', initial_balance: 0 }
 ];
 
 export const DEFAULT_CATEGORIES = [
@@ -131,7 +131,7 @@ const toTime = (iso) => {
   const t = new Date(iso || 0).getTime();
   return Number.isFinite(t) ? t : 0;
 };
-const isUntouchedSeed = (r) => toTime(r.updated_at) === SEED_EPOCH_MS;
+export const isUntouchedSeed = (r) => toTime(r.updated_at) === SEED_EPOCH_MS;
 
 export function seedAccountId(a) {
   return deterministicUuidV7(`seed:account:${accountKey(a)}`, SEED_EPOCH_MS);
@@ -144,6 +144,17 @@ export function seedCategoryId(c) {
 export async function seedDatabase() {
   const wsCount = await db.workspaces.count();
   if (wsCount > 0) {
+    // Pastikan dompet seed default yang belum pernah diubah user bersaldo awal 0
+    const existingAccounts = await db.accounts.toArray();
+    for (const acc of existingAccounts) {
+      if (!acc.deleted_at && isUntouchedSeed(acc) && Number(acc.initial_balance) !== 0) {
+        await db.accounts.update(acc.id, {
+          initial_balance: 0,
+          sync_status: 'pending'
+        });
+      }
+    }
+
     // Sinkronisasi nama kategori lama Buku Pribadi jika masih memakai label sebelumnya
     const renameMap = {
       'Makan & Kebutuhan Rumah': 'Makan & Minuman',
@@ -622,12 +633,14 @@ export async function settleReimbursement(txId, targetWorkspaceAccountId = null)
  */
 export async function saveAccount(accData) {
   const now = new Date().toISOString();
+  const existing = accData.id ? await db.accounts.get(accData.id) : null;
   const record = {
     id: accData.id || uuidv7(),
     workspace_id: accData.workspace_id,
     name: accData.name.trim(),
     type: accData.type || 'cash',
     initial_balance: Math.round(Number(accData.initial_balance) || 0),
+    created_at: existing?.created_at || now,
     updated_at: now,
     deleted_at: null,
     sync_status: 'pending'
@@ -650,12 +663,14 @@ export async function softDeleteAccount(id) {
  */
 export async function saveCategory(catData) {
   const now = new Date().toISOString();
+  const existing = catData.id ? await db.categories.get(String(catData.id)) : null;
   const record = {
     id: String(catData.id || uuidv7()),
     workspace_id: String(catData.workspace_id || 'personal'),
     name: String(catData.name || '').trim(),
     type: String(catData.type || 'expense'),
     keywords: String(catData.keywords || '').trim(),
+    created_at: existing?.created_at || now,
     updated_at: now,
     deleted_at: null,
     sync_status: 'pending'

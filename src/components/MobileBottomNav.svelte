@@ -408,196 +408,230 @@
             class="w-full p-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex items-center justify-between gap-3 shadow-2xs active:scale-[0.99] transition-all cursor-pointer text-left"
           >
             <div class="flex items-center gap-2.5 min-w-0">
-              <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-900 flex items-center justify-center shrink-0">
+              <div
+                class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-900 flex items-center justify-center shrink-0"
+              >
                 {#if isSyncing}
-                  <svg class="w-4 h-4 animate-spin text-indigo-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                  <svg
+                    class="w-4 h-4 animate-spin text-indigo-700"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                  >
                     <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                   </svg>
                 {:else}
-                  <svg class="w-4 h-4 text-indigo-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                    <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" stroke-linecap="round" stroke-linejoin="round" />
+                  <svg
+                    class="w-4 h-4 text-indigo-700"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                  >
+                    <path
+                      d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
                   </svg>
                 {/if}
               </div>
               <div class="min-w-0">
-                <div class="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
-                  <span>Sinkronisasi Cloud</span>
+                <div
+                  class="text-xs font-extrabold text-slate-900 flex items-center gap-1.5"
+                >
+                  <span>Sinkronisasi</span>
                   {#if syncPendingCount > 0}
-                    <span class="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md tabular-nums">
+                    <span
+                      class="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md tabular-nums"
+                    >
                       {syncPendingCount} pending
                     </span>
                   {/if}
                 </div>
-                <div class="text-[10px] text-slate-500 truncate">
+                <!-- <div class="text-[10px] text-slate-500 truncate">
                   Delta Sync PostgreSQL Supabase & RLS
-                </div>
+                </div> -->
               </div>
             </div>
-            <svg class="w-4 h-4 text-slate-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-              <path d="m9 18 6-6-6-6" stroke-linecap="round" stroke-linejoin="round" />
+            <svg
+              class="w-4 h-4 text-slate-400 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+            >
+              <path
+                d="m9 18 6-6-6-6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
           </button>
 
           <div class="grid grid-cols-2 gap-2.5">
-          <!-- Menu 1: Laporan & Excel -->
-          <button
-            type="button"
-            onclick={() => {
-              closeSheet();
-              onOpenReportModal?.();
-            }}
-            class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
-          >
-            <div
-              class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center"
+            <!-- Menu 1: Laporan & Excel -->
+            <button
+              type="button"
+              onclick={() => {
+                closeSheet();
+                onOpenReportModal?.();
+              }}
+              class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
             >
-              <svg
-                class="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.1"
+              <div
+                class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center"
               >
-                <path
-                  d="M18 20V10M12 20V4M6 20v-6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-            </div>
-            <div>
-              <div class="text-xs font-extrabold text-slate-900">
-                Laporan & Excel
+                <svg
+                  class="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.1"
+                >
+                  <path
+                    d="M18 20V10M12 20V4M6 20v-6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
               </div>
-              <!-- <div class="text-[10px] text-slate-500 mt-0.5">
+              <div>
+                <div class="text-xs font-extrabold text-slate-900">
+                  Laporan & Excel
+                </div>
+                <!-- <div class="text-[10px] text-slate-500 mt-0.5">
                 Rekap kas, Export & Import .xlsx
               </div> -->
-            </div>
-          </button>
-
-          <!-- Menu 2: Back Up & PIN -->
-          <button
-            type="button"
-            onclick={() => {
-              closeSheet();
-              onOpenSecurityModal?.();
-            }}
-            class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
-          >
-            <div
-              class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-900 flex items-center justify-center relative"
-            >
-              <svg
-                class="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.1"
-              >
-                <path
-                  d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-              {#if isPinEnabled}
-                <span
-                  class="w-2 h-2 rounded-full bg-emerald-500 absolute -top-0.5 -right-0.5"
-                ></span>
-              {/if}
-            </div>
-            <div>
-              <div class="text-xs font-extrabold text-slate-900">
-                Back Up & PIN
               </div>
-              <!-- <div class="text-[10px] text-slate-500 mt-0.5">
+            </button>
+
+            <!-- Menu 2: Back Up & PIN -->
+            <button
+              type="button"
+              onclick={() => {
+                closeSheet();
+                onOpenSecurityModal?.();
+              }}
+              class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
+            >
+              <div
+                class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-900 flex items-center justify-center relative"
+              >
+                <svg
+                  class="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.1"
+                >
+                  <path
+                    d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                {#if isPinEnabled}
+                  <span
+                    class="w-2 h-2 rounded-full bg-emerald-500 absolute -top-0.5 -right-0.5"
+                  ></span>
+                {/if}
+              </div>
+              <div>
+                <div class="text-xs font-extrabold text-slate-900">
+                  Back Up & PIN
+                </div>
+                <!-- <div class="text-[10px] text-slate-500 mt-0.5">
                 Backup AES-256 & PIN 6 digit
               </div> -->
-            </div>
-          </button>
+              </div>
+            </button>
 
-          <!-- Menu 3: Kategori -->
-          <button
-            type="button"
-            onclick={() => {
-              closeSheet();
-              onOpenManageCategories?.();
-            }}
-            class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
-          >
-            <div
-              class="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center"
+            <!-- Menu 3: Kategori -->
+            <button
+              type="button"
+              onclick={() => {
+                closeSheet();
+                onOpenManageCategories?.();
+              }}
+              class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
             >
-              <svg
-                class="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.1"
+              <div
+                class="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center"
               >
-                <path
-                  d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <line
-                  x1="7"
-                  y1="7"
-                  x2="7.01"
-                  y2="7"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-            </div>
-            <div>
-              <div class="text-xs font-extrabold text-slate-900">Kategori</div>
-              <!-- <div class="text-[10px] text-slate-500 mt-0.5">
+                <svg
+                  class="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.1"
+                >
+                  <path
+                    d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <line
+                    x1="7"
+                    y1="7"
+                    x2="7.01"
+                    y2="7"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </div>
+              <div>
+                <div class="text-xs font-extrabold text-slate-900">
+                  Kategori
+                </div>
+                <!-- <div class="text-[10px] text-slate-500 mt-0.5">
                 Kelola kategori masuk & keluar
               </div> -->
-            </div>
-          </button>
+              </div>
+            </button>
 
-          <!-- Menu 4: Dompet -->
-          <button
-            type="button"
-            onclick={() => {
-              closeSheet();
-              onOpenManageWallets?.();
-            }}
-            class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
-          >
-            <div
-              class="w-8 h-8 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center"
+            <!-- Menu 4: Dompet -->
+            <button
+              type="button"
+              onclick={() => {
+                closeSheet();
+                onOpenManageWallets?.();
+              }}
+              class="p-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex flex-col items-start gap-2 active:scale-[0.99] transition-all cursor-pointer text-left"
             >
-              <svg
-                class="w-4 h-4"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.1"
+              <div
+                class="w-8 h-8 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center"
               >
-                <path
-                  d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5Z"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-                <path
-                  d="M16 12h5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
-            </div>
-            <div>
-              <div class="text-xs font-extrabold text-slate-900">Dompet</div>
-              <!-- <div class="text-[10px] text-slate-500 mt-0.5">
+                <svg
+                  class="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.1"
+                >
+                  <path
+                    d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5Z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                  <path
+                    d="M16 12h5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </div>
+              <div>
+                <div class="text-xs font-extrabold text-slate-900">Dompet</div>
+                <!-- <div class="text-[10px] text-slate-500 mt-0.5">
                 Kelola kas tunai & rekening bank
               </div> -->
-            </div>
-          </button>
+              </div>
+            </button>
+          </div>
         </div>
-      </div>
       {/if}
     </div>
   </div>

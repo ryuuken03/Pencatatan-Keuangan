@@ -51,7 +51,8 @@ export class SupabaseAdapter {
       isConfigured: this.isConfigured(),
       isAuthenticated: this.isAuthenticated(),
       user: this.user,
-      autoSync: localStorage.getItem(STORAGE_KEYS.AUTO_SYNC) === 'true',
+      // Default AKTIF: hanya nonaktif bila user mematikan secara eksplisit
+      autoSync: localStorage.getItem(STORAGE_KEYS.AUTO_SYNC) !== 'false',
       lastSyncedAt: this.getLastSyncedAt()
     };
   }

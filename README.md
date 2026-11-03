@@ -34,7 +34,7 @@ Hasil build statis siap pakai (lengkap dengan *Service Worker* `sw.js` & `manife
 ## ✨ Fitur Lengkap Saat Ini (Fase 1 & Fase 2 Selesai 100%)
 
 ### 1. Multi-Workspace dengan Identitas Warna Solid (Anti AI-Slop)
-Setiap buku kas memiliki tema warna solid tersendiri agar tidak salah kamar saat mencatat transaksi:
+Setiap buku kas memiliki tema warna solid tersendiri agar tidak salah kamar saat mencatat transaksi (seluruh dompet kas bawaan memiliki saldo awal **`Rp 0`** saat pertama kali dijalankan):
 - **Buku Pribadi (`personal`):** Tema *Deep Indigo* (`bg-indigo-950`) — gaji, kebutuhan rumah tangga, tabungan, dan pengeluaran harian.
 - **Buku Usaha (`business`):** Tema *Deep Teal* (`bg-teal-900`) — modal, omzet penjualan, HPP/belanja bahan, operasional usaha, dan piutang pelanggan.
 - **Manager Kopdes (`kopdes`):** Tema *Forest Emerald* (`bg-emerald-900`) — arus kas operasional & manajerial Koperasi Desa per Unit Usaha (`USP`, `Toko/Ritel`, `Pertanian/Pupuk`, `Jasa/Lainnya`, `Umum/Sekretariat`), lengkap dengan `No. Bukti (BKM/BKK)` dan `PIC/Pihak Terkait`.
@@ -75,7 +75,7 @@ Seluruh metode pencatatan bermuara ke **1 Form Verifikasi CRUD Utama**:
   - Mengunci aplikasi dengan PIN 6 digit (disimpan aman dengan hash `SHA-256` + salt), dilengkapi numpad layar sentuh & dukungan keyboard fisik.
 - **Strict Content Security Policy (CSP):** Terpasang di `index.html` untuk mencegah XSS dan membatasi koneksi keluar.
 
-### 6. Sinkronisasi Cloud Supabase (Fase 2: Delta Sync & RLS)
+### 6. Sinkronisasi Cloud Supabase (Fase 2: Auto-Sync Dua Arah, Delta Sync & RLS)
 - **Konfigurasi Otomatis via `.env` (Zero Manual Form):**
   - Supabase Project URL dan Anon Key dibaca langsung dari berkas `.env` (`VITE_SUPABASE_URL` dan `VITE_SUPABASE_ANON_KEY`) tanpa perlu input manual di UI aplikasi.
 - **Pendaftaran Hemat Kuota (Tanpa Konfirmasi Email):**
@@ -86,25 +86,30 @@ Seluruh metode pencatatan bermuara ke **1 Form Verifikasi CRUD Utama**:
   - Antarmuka hanya menampilkan **Kartu Akun Cloud Aktif** (email akun) + tombol **Keluar (Logout)** dan **Panel Antrean Perubahan** + tombol **Sinkronkan Sekarang**.
 - **Arsitektur 100% Offline-First:**
   - Seluruh operasi pencatatan, mutasi, dan edit transaksi selalu disimpan instan ke Dexie.js lokal tanpa menunggu respon jaringan internet.
+- **Auto-Sync Dua Arah (Aktif Secara Default):**
+  - **Auto-Push (Offline $\rightarrow$ Online):** Setiap perubahan lokal (`sync_status = 'pending'`) pada transaksi, dompet, maupun kategori dipantau secara *real-time* via Dexie `liveQuery` dan langsung di-push ke Supabase setelah *debounce* `2 detik`. Transaksi yang dicatat saat **offline** otomatis dikirim begitu perangkat kembali **online** (`window.online`) dengan *push timestamp* yang menjamin perangkat lain ikut menarik perubahan tersebut.
+  - **Auto-Pull (Online $\rightarrow$ Offline):** Menarik perubahan dari cloud secara otomatis saat aplikasi dibuka (`startup`), sesaat setelah login, saat berpindah kembali ke tab aplikasi (`visibilitychange`), serta melalui *polling* ringan setiap `30 detik` ketika tab aktif, lalu me-refresh daftar transaksi dan saldo secara reaktif tanpa perlu *reload* halaman.
+- **Anti-Duplikat Dompet & Kategori Lintas Perangkat:**
+  - Seed bawaan menggunakan **UUID v7 deterministik** (`SEED_EPOCH_ISO`) dengan saldo awal seluruh kas **`Rp 0`**.
+  - Urutan siklus **`Pull` $\rightarrow$ `Dedupe` $\rightarrow$ `Push`** otomatis menggabungkan dompet/kategori kembar (nama sama dalam buku yang sama) melalui kolom `merged_into` dan me-remap seluruh referensi transaksi ke ID kanonik.
 - **Delta Sync Berbasis Timestamp & Status:**
-  - Hanya mengirimkan baris yang memiliki status `sync_status = 'pending'` dan menarik baris remote yang memiliki `updated_at > last_synced_at`.
+  - Hanya mengirimkan baris yang memiliki status `sync_status = 'pending'` dan menarik baris remote yang berubah setelah *cursor* sinkronisasi per-user (`updated_at` dengan *buffer clock-skew* 60 detik serta paginasi > 1.000 baris).
   - Serialisasi lampiran WebP otomatis ke JSON serializable sehingga struk foto ikut tersinkronisasi lintas perangkat (misal foto di HP, lihat di Laptop).
 - **PostgreSQL & Row Level Security (RLS):**
-  - Skema database di `supabase/schema.sql` memproteksi data pengguna secara ketat: pengguna hanya dapat melihat dan memodifikasi data miliknya (`auth.uid() = user_id`).
+  - Skema database di `supabase/schema.sql` (dan migrasi `supabase/migrations/20261103_merged_into.sql`) memproteksi data pengguna secara ketat: pengguna hanya dapat melihat dan memodifikasi data miliknya (`auth.uid() = user_id`).
 - **Zero External Bloat:**
   - Menggunakan client native `fetch` (PostgREST & GoTrue REST) tanpa menambahkan library berat `@supabase/supabase-js`, menjaga build tetap super ringan dan aman dari supply-chain risk.
 - **Kontrol Sinkronisasi & Indikator:**
   - Indikator status sync interaktif di Header Desktop (Pill status, jumlah pending, spin saat sync) dan Mobile Top Toolbar / Menu Pengaturan.
-  - Auto-Sync otomatis berjalan saat perangkat kembali online setelah mode offline.
 
 ### 7. Ergonomi Mobile (`< 768px`) & Desktop (`>= 768px`)
 - **Mobile View:**
-  - **Top Toolbar:** Nama aplikasi **`Buku Kas`**, indikator buku aktif, status PIN, dan badge `Offline Ready`.
+  - **Top Toolbar:** Nama aplikasi **`Buku Kas`**, indikator buku aktif, status PIN, dan badge `Offline Ready` / status sinkronisasi.
   - **Swipeable Transaction Cards:** Geser kartu transaksi ke kanan atau kiri untuk membuka tombol cepat **Edit** & **Hapus**, atau ketuk untuk membuka modal detail.
   - **Bottom Navbar 3-Kolom (Ikon di atas, Teks di bawah):**
     1. `Buku Pribadi / Buku Usaha / Kopdes` (*WorkspaceSwitcher* + info saldo tiap buku).
     2. `Catat Transaksi` (*Tambah Transaksi*, *Foto*, *Record Voice*).
-    3. `Pengaturan` (*Laporan & Excel*, *Back Up & PIN*, *Kategori*, *Dompet*).
+    3. `Pengaturan` (*Sinkronisasi Cloud*, *Laporan & Excel*, *Back Up & PIN*, *Kategori*, *Dompet*).
 - **Desktop View:** Header *Segmented Switcher* horizontal & *Spreadsheet Table View* multi-kolom.
 
 ---

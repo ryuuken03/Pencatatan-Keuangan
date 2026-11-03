@@ -243,7 +243,7 @@
                 : syncState.isAuthenticated
                   ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
                   : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}"
-            title="Pengaturan Sinkronisasi Cloud Supabase"
+            title="Pengaturan Sinkronisasi"
           >
             {#if syncState.isSyncing}
               <svg class="w-4 h-4 animate-spin text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
