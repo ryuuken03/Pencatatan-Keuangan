@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import {
     seedDatabase,
     loadAppData,
@@ -19,19 +19,45 @@
   import VoiceInputModal from './components/VoiceInputModal.svelte';
   import ReceiptScannerModal from './components/ReceiptScannerModal.svelte';
   import ReceiptPreviewModal from './components/ReceiptPreviewModal.svelte';
+  import ReportExportModal from './components/ReportExportModal.svelte';
+  import SecurityBackupModal from './components/SecurityBackupModal.svelte';
+  import SyncSettingsModal from './components/SyncSettingsModal.svelte';
+  import PinLockScreen from './components/PinLockScreen.svelte';
+  import MobileBottomNav from './components/MobileBottomNav.svelte';
+  import { syncEngine } from './lib/sync/syncEngine.js';
+  import {
+    hasPinLock,
+    isSessionUnlocked,
+    setSessionUnlocked
+  } from './lib/utils/cryptoBackup.js';
 
   let activeWorkspace = $state('personal');
   let allAccounts = $state([]);
   let allCategories = $state([]);
   let allTransactions = $state([]);
   let isReady = $state(false);
+  let isPinEnabled = $state(false);
+  let isAppLocked = $state(false);
+
+  // Sync state
+  let syncState = $state({
+    isSyncing: false,
+    totalPending: 0,
+    isConfigured: false,
+    isAuthenticated: false
+  });
+  let isSyncModalOpen = $state(false);
+  let unsubscribeSync = null;
 
   // Modal states
   let isTxModalOpen = $state(false);
   let editingTx = $state(null);
   let isManageModalOpen = $state(false);
+  let manageModalInitialTab = $state('accounts');
   let isVoiceModalOpen = $state(false);
   let isReceiptModalOpen = $state(false);
+  let isReportModalOpen = $state(false);
+  let isSecurityModalOpen = $state(false);
   let previewReceiptTx = $state(null);
 
   async function refreshData() {
@@ -42,9 +68,22 @@
   }
 
   onMount(async () => {
+    isPinEnabled = hasPinLock();
+    isAppLocked = isPinEnabled && !isSessionUnlocked();
     await seedDatabase();
     await refreshData();
+
+    unsubscribeSync = syncEngine.subscribe((state) => {
+      syncState = state;
+    });
+    syncEngine.startAutoSyncInterval(60000);
+
     isReady = true;
+  });
+
+  onDestroy(() => {
+    if (unsubscribeSync) unsubscribeSync();
+    syncEngine.stopAutoSyncInterval();
   });
 
   // Lookup Maps
@@ -59,6 +98,27 @@
   let accountBalances = $derived(
     computeAccountBalances(allAccounts, allTransactions)
   );
+
+  // Total Saldo & Jumlah Dompet per Buku Kas (untuk Mobile WorkspaceSwitcher Sheet)
+  let workspaceBalances = $derived.by(() => {
+    const totals = { personal: 0, business: 0, kopdes: 0 };
+    for (const acc of allAccounts) {
+      if (totals[acc.workspace_id] !== undefined) {
+        totals[acc.workspace_id] += accountBalances[acc.id] ?? 0;
+      }
+    }
+    return totals;
+  });
+
+  let workspaceAccountCounts = $derived.by(() => {
+    const counts = { personal: 0, business: 0, kopdes: 0 };
+    for (const acc of allAccounts) {
+      if (counts[acc.workspace_id] !== undefined) {
+        counts[acc.workspace_id] += 1;
+      }
+    }
+    return counts;
+  });
 
   // Akun & Kategori khusus Workspace aktif
   let activeAccounts = $derived(
@@ -185,14 +245,21 @@
   }
 
   async function handleDeleteTransaction(id) {
-    if (!confirm('Hapus transaksi ini?')) return;
+    if (!confirm('Hapus transaksi ini?')) return false;
     await softDeleteTransaction(id);
+    if (previewReceiptTx?.id === id) {
+      previewReceiptTx = null;
+    }
     await refreshData();
+    return true;
   }
 
   async function handleSettleReimburse(txId) {
     await settleReimbursement(txId);
     await refreshData();
+    if (previewReceiptTx?.id === txId) {
+      previewReceiptTx = allTransactions.find((t) => t.id === txId) || null;
+    }
   }
 
   // Handlers CRUD Dompet & Kategori
@@ -229,16 +296,28 @@
       <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Memuat Database Lokal...</span>
     </div>
   {:else}
+    {#if isAppLocked}
+      <PinLockScreen onUnlocked={() => (isAppLocked = false)} />
+    {/if}
+
     <WorkspaceSwitcher
       {activeWorkspace}
       onSelectWorkspace={(ws) => (activeWorkspace = ws)}
       accounts={activeAccounts}
       {accountBalances}
       summary={workspaceSummary}
-      onOpenManageModal={() => (isManageModalOpen = true)}
+      onOpenManageModal={() => {
+        manageModalInitialTab = 'accounts';
+        isManageModalOpen = true;
+      }}
       onOpenNewTransaction={openNewTransaction}
       onOpenVoiceModal={() => (isVoiceModalOpen = true)}
       onOpenReceiptModal={() => (isReceiptModalOpen = true)}
+      onOpenReportModal={() => (isReportModalOpen = true)}
+      onOpenSecurityModal={() => (isSecurityModalOpen = true)}
+      onOpenSyncModal={() => (isSyncModalOpen = true)}
+      {syncState}
+      {isPinEnabled}
     />
 
     <main class="flex-1">
@@ -251,48 +330,34 @@
         onDelete={handleDeleteTransaction}
         onSettleReimburse={handleSettleReimburse}
         onPreviewReceipt={(tx) => (previewReceiptTx = tx)}
+        onOpenReportModal={() => (isReportModalOpen = true)}
       />
     </main>
 
-    <!-- Bottom Floating Action Bar Khusus Mobile (< 768px) -->
-    <div class="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200/80 px-3.5 py-2.5 flex items-center gap-2">
-      <button
-        type="button"
-        onclick={() => (isVoiceModalOpen = true)}
-        class="p-3 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 rounded-xl shadow-2xs flex items-center justify-center active:scale-[0.98] transition-all cursor-pointer"
-        aria-label="Catat via Suara"
-        title="Catat Cepat via Suara (id-ID)"
-      >
-        <svg class="w-4 h-4 text-rose-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-
-      <button
-        type="button"
-        onclick={() => (isReceiptModalOpen = true)}
-        class="p-3 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 rounded-xl shadow-2xs flex items-center justify-center active:scale-[0.98] transition-all cursor-pointer"
-        aria-label="Scan Foto Struk"
-        title="Scan Foto Struk / Nota (WebP + OCR)"
-      >
-        <svg class="w-4 h-4 text-emerald-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-          <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="12" cy="13" r="3"/>
-        </svg>
-      </button>
-
-      <button
-        type="button"
-        onclick={openNewTransaction}
-        class="flex-1 py-3 {mobileBtnCls} text-white text-xs font-extrabold uppercase tracking-wider rounded-xl shadow-lg flex items-center justify-center gap-2 active:scale-[0.99] transition-all cursor-pointer"
-      >
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span>Catat Transaksi</span>
-      </button>
-    </div>
+    <!-- Bottom Navigation Bar Khusus Mobile (< 768px) -->
+    <MobileBottomNav
+      {activeWorkspace}
+      onSelectWorkspace={(ws) => (activeWorkspace = ws)}
+      {workspaceBalances}
+      {workspaceAccountCounts}
+      {isPinEnabled}
+      syncPendingCount={syncState.totalPending}
+      isSyncing={syncState.isSyncing}
+      onOpenNewTransaction={openNewTransaction}
+      onOpenReceiptModal={() => (isReceiptModalOpen = true)}
+      onOpenVoiceModal={() => (isVoiceModalOpen = true)}
+      onOpenReportModal={() => (isReportModalOpen = true)}
+      onOpenSecurityModal={() => (isSecurityModalOpen = true)}
+      onOpenSyncModal={() => (isSyncModalOpen = true)}
+      onOpenManageWallets={() => {
+        manageModalInitialTab = 'accounts';
+        isManageModalOpen = true;
+      }}
+      onOpenManageCategories={() => {
+        manageModalInitialTab = 'categories';
+        isManageModalOpen = true;
+      }}
+    />
 
     <!-- Modal Form CRUD Transaksi -->
     <TransactionForm
@@ -346,12 +411,15 @@
       {accountsMap}
       {categoriesMap}
       onEdit={openEditTransaction}
+      onDelete={handleDeleteTransaction}
+      onSettleReimburse={handleSettleReimburse}
       onClose={() => (previewReceiptTx = null)}
     />
 
     <!-- Modal Kelola Dompet & Kategori -->
     <ManageWalletCategoryModal
       isOpen={isManageModalOpen}
+      initialTab={manageModalInitialTab}
       {activeWorkspace}
       accounts={activeAccounts}
       categories={activeCategories}
@@ -362,5 +430,44 @@
       onDeleteCategory={handleDeleteCategory}
       onClose={() => (isManageModalOpen = false)}
     />
+
+    <!-- Modal Rekap Laporan, Export & Import Excel (.xlsx) -->
+    <ReportExportModal
+      isOpen={isReportModalOpen}
+      {activeWorkspace}
+      transactions={activeTransactions}
+      {allTransactions}
+      {accountsMap}
+      {categoriesMap}
+      onSettleReimburse={handleSettleReimburse}
+      onPreviewReceipt={(tx) => (previewReceiptTx = tx)}
+      onDataImported={refreshData}
+      onClose={() => (isReportModalOpen = false)}
+    />
+
+    <!-- Modal Backup JSON Terenkripsi AES-GCM 256-Bit & PIN Lock 6 Digit -->
+    <SecurityBackupModal
+      isOpen={isSecurityModalOpen}
+      {activeWorkspace}
+      onDataRestored={refreshData}
+      onLockAppNow={() => {
+        setSessionUnlocked(false);
+        isAppLocked = true;
+      }}
+      onPinStateChange={(enabled) => {
+        isPinEnabled = enabled;
+      }}
+      onClose={() => (isSecurityModalOpen = false)}
+    />
+
+    <!-- Modal Pengaturan Sinkronisasi Cloud (Supabase Delta Sync) -->
+    {#if isSyncModalOpen}
+      <SyncSettingsModal
+        isOpen={isSyncModalOpen}
+        {activeWorkspace}
+        onDataSynced={refreshData}
+        onClose={() => (isSyncModalOpen = false)}
+      />
+    {/if}
   {/if}
 </div>

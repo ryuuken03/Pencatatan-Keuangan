@@ -7,6 +7,7 @@
 
   let {
     isOpen = false,
+    initialTab = "accounts",
     activeWorkspace = "personal",
     accounts = [],
     categories = [],
@@ -19,6 +20,12 @@
   } = $props();
 
   let activeTab = $state("accounts");
+
+  $effect(() => {
+    if (isOpen) {
+      activeTab = initialTab === "categories" ? "categories" : "accounts";
+    }
+  });
 
   let editingAccId = $state(null);
   let accName = $state("");

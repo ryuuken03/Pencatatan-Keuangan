@@ -1,5 +1,6 @@
 import Dexie from 'dexie';
 import { uuidv7 } from './utils.js';
+import { blobToSerializable, serializableToBlob } from './utils/cryptoBackup.js';
 
 export const db = new Dexie('AplikasiKeuanganDB');
 
@@ -65,9 +66,84 @@ export const KOPDES_UNITS = [
   'Umum/Sekretariat'
 ];
 
+export const DEFAULT_ACCOUNTS = [
+  // Pribadi
+  { workspace_id: 'personal', name: 'Dompet Tunai', type: 'cash', initial_balance: 500000 },
+  { workspace_id: 'personal', name: 'Bank Pribadi', type: 'bank', initial_balance: 5000000 },
+  { workspace_id: 'personal', name: 'E-Wallet', type: 'ewallet', initial_balance: 250000 },
+  // Usaha
+  { workspace_id: 'business', name: 'Kas Tunai Usaha', type: 'cash', initial_balance: 1500000 },
+  { workspace_id: 'business', name: 'Rekening Usaha', type: 'bank', initial_balance: 10000000 },
+  // Kopdes
+  { workspace_id: 'kopdes', name: 'Kas Kecil Kopdes', type: 'cash', initial_balance: 2000000 },
+  { workspace_id: 'kopdes', name: 'BRI Kopdes', type: 'bank', initial_balance: 25000000 }
+];
+
+export const DEFAULT_CATEGORIES = [
+  // Pribadi - Expense
+  { workspace_id: 'personal', name: 'Pengeluaran Pribadi', type: 'expense' },
+  { workspace_id: 'personal', name: 'Kesehatan & Pendidikan', type: 'expense' },
+  { workspace_id: 'personal', name: 'Makan & Minuman', type: 'expense' },
+  { workspace_id: 'personal', name: 'Transportasi & BBM', type: 'expense' },
+  { workspace_id: 'personal', name: 'Tagihan & Komunikasi', type: 'expense' },
+  // Pribadi - Income
+  { workspace_id: 'personal', name: 'Pemasukan Lainnya', type: 'income' },
+  { workspace_id: 'personal', name: 'Investasi / Bagi Hasil', type: 'income' },
+  { workspace_id: 'personal', name: 'Gaji & Pendapatan', type: 'income' },
+
+  // Usaha - Income
+  { workspace_id: 'business', name: 'Omzet Penjualan', type: 'income' },
+  { workspace_id: 'business', name: 'Suntikan Modal', type: 'income' },
+  { workspace_id: 'business', name: 'Pelunasan Piutang Pelanggan', type: 'income' },
+  // Usaha - Expense
+  { workspace_id: 'business', name: 'HPP / Pembelian Bahan', type: 'expense' },
+  { workspace_id: 'business', name: 'Operasional & Listrik Usaha', type: 'expense' },
+  { workspace_id: 'business', name: 'Upah Karyawan / Tenaga', type: 'expense' },
+  { workspace_id: 'business', name: 'Pemasaran & Distribusi', type: 'expense' },
+
+  // Kopdes - Income (Sesuai PRD 3.3)
+  { workspace_id: 'kopdes', name: 'Setoran Unit Usaha', type: 'income' },
+  { workspace_id: 'kopdes', name: 'Simpanan Pokok/Wajib/Sukarela', type: 'income' },
+  { workspace_id: 'kopdes', name: 'Angsuran Masuk', type: 'income' },
+  { workspace_id: 'kopdes', name: 'Dana Hibah/Penyertaan', type: 'income' },
+  { workspace_id: 'kopdes', name: 'Lain-lain', type: 'income' },
+  // Kopdes - Expense (Sesuai PRD 3.3)
+  { workspace_id: 'kopdes', name: 'Belanja Barang Unit', type: 'expense' },
+  { workspace_id: 'kopdes', name: 'Biaya Operasional Kantor (ATK/Listrik/Konsumsi)', type: 'expense' },
+  { workspace_id: 'kopdes', name: 'Honor/Gaji Pengurus & Staf', type: 'expense' },
+  { workspace_id: 'kopdes', name: 'Pencairan Pinjaman', type: 'expense' },
+  { workspace_id: 'kopdes', name: 'Perjalanan Dinas/Rapat', type: 'expense' },
+  { workspace_id: 'kopdes', name: 'Lain-lain', type: 'expense' }
+];
+
 export async function seedDatabase() {
   const wsCount = await db.workspaces.count();
-  if (wsCount > 0) return;
+  if (wsCount > 0) {
+    // Sinkronisasi nama kategori lama Buku Pribadi jika masih memakai label sebelumnya
+    const renameMap = {
+      'Makan & Kebutuhan Rumah': 'Makan & Minuman',
+      'Hasil Investasi / Bagi Hasil': 'Investasi / Bagi Hasil',
+      'Pengeluaran Pribadi Lainnya': 'Pengeluaran Pribadi'
+    };
+    const personalCats = await db.categories.where('workspace_id').equals('personal').toArray();
+    const nowUpdate = new Date().toISOString();
+    for (const cat of personalCats) {
+      if (!cat.deleted_at && renameMap[cat.name]) {
+        const targetName = renameMap[cat.name];
+        const alreadyExists = personalCats.some(
+          (c) => !c.deleted_at && c.id !== cat.id && c.name.toLowerCase() === targetName.toLowerCase()
+        );
+        if (!alreadyExists) {
+          await db.categories.update(cat.id, {
+            name: targetName,
+            updated_at: nowUpdate,
+            sync_status: 'pending'
+          });
+        }
+      }
+    }
+    return;
+  }
 
   const now = new Date().toISOString();
 
@@ -80,59 +156,20 @@ export async function seedDatabase() {
     ]);
 
     // 2. Seed Accounts
-    const accounts = [
-      // Pribadi
-      { id: uuidv7(), workspace_id: 'personal', name: 'Dompet Tunai', type: 'cash', initial_balance: 500000, updated_at: now, deleted_at: null, sync_status: 'pending' },
-      { id: uuidv7(), workspace_id: 'personal', name: 'Bank Pribadi', type: 'bank', initial_balance: 5000000, updated_at: now, deleted_at: null, sync_status: 'pending' },
-      { id: uuidv7(), workspace_id: 'personal', name: 'E-Wallet', type: 'ewallet', initial_balance: 250000, updated_at: now, deleted_at: null, sync_status: 'pending' },
-      // Usaha
-      { id: uuidv7(), workspace_id: 'business', name: 'Kas Tunai Usaha', type: 'cash', initial_balance: 1500000, updated_at: now, deleted_at: null, sync_status: 'pending' },
-      { id: uuidv7(), workspace_id: 'business', name: 'Rekening Usaha', type: 'bank', initial_balance: 10000000, updated_at: now, deleted_at: null, sync_status: 'pending' },
-      // Kopdes
-      { id: uuidv7(), workspace_id: 'kopdes', name: 'Kas Kecil Kopdes', type: 'cash', initial_balance: 2000000, updated_at: now, deleted_at: null, sync_status: 'pending' },
-      { id: uuidv7(), workspace_id: 'kopdes', name: 'BRI Kopdes', type: 'bank', initial_balance: 25000000, updated_at: now, deleted_at: null, sync_status: 'pending' }
-    ];
+    const accounts = DEFAULT_ACCOUNTS.map((a) => ({
+      id: uuidv7(),
+      workspace_id: a.workspace_id,
+      name: a.name,
+      type: a.type,
+      initial_balance: a.initial_balance,
+      updated_at: now,
+      deleted_at: null,
+      sync_status: 'pending'
+    }));
     await db.accounts.bulkPut(accounts);
 
     // 3. Seed Categories
-    const categoriesData = [
-      // Pribadi - Income
-      { workspace_id: 'personal', name: 'Gaji & Pendapatan', type: 'income' },
-      { workspace_id: 'personal', name: 'Hasil Investasi / Bagi Hasil', type: 'income' },
-      { workspace_id: 'personal', name: 'Pemasukan Lainnya', type: 'income' },
-      // Pribadi - Expense
-      { workspace_id: 'personal', name: 'Makan & Kebutuhan Rumah', type: 'expense' },
-      { workspace_id: 'personal', name: 'Transportasi & BBM', type: 'expense' },
-      { workspace_id: 'personal', name: 'Tagihan & Komunikasi', type: 'expense' },
-      { workspace_id: 'personal', name: 'Kesehatan & Pendidikan', type: 'expense' },
-      { workspace_id: 'personal', name: 'Pengeluaran Pribadi Lainnya', type: 'expense' },
-
-      // Usaha - Income
-      { workspace_id: 'business', name: 'Omzet Penjualan', type: 'income' },
-      { workspace_id: 'business', name: 'Suntikan Modal', type: 'income' },
-      { workspace_id: 'business', name: 'Pelunasan Piutang Pelanggan', type: 'income' },
-      // Usaha - Expense
-      { workspace_id: 'business', name: 'HPP / Pembelian Bahan', type: 'expense' },
-      { workspace_id: 'business', name: 'Operasional & Listrik Usaha', type: 'expense' },
-      { workspace_id: 'business', name: 'Upah Karyawan / Tenaga', type: 'expense' },
-      { workspace_id: 'business', name: 'Pemasaran & Distribusi', type: 'expense' },
-
-      // Kopdes - Income (Sesuai PRD 3.3)
-      { workspace_id: 'kopdes', name: 'Setoran Unit Usaha', type: 'income' },
-      { workspace_id: 'kopdes', name: 'Simpanan Pokok/Wajib/Sukarela', type: 'income' },
-      { workspace_id: 'kopdes', name: 'Angsuran Masuk', type: 'income' },
-      { workspace_id: 'kopdes', name: 'Dana Hibah/Penyertaan', type: 'income' },
-      { workspace_id: 'kopdes', name: 'Lain-lain', type: 'income' },
-      // Kopdes - Expense (Sesuai PRD 3.3)
-      { workspace_id: 'kopdes', name: 'Belanja Barang Unit', type: 'expense' },
-      { workspace_id: 'kopdes', name: 'Biaya Operasional Kantor (ATK/Listrik/Konsumsi)', type: 'expense' },
-      { workspace_id: 'kopdes', name: 'Honor/Gaji Pengurus & Staf', type: 'expense' },
-      { workspace_id: 'kopdes', name: 'Pencairan Pinjaman', type: 'expense' },
-      { workspace_id: 'kopdes', name: 'Perjalanan Dinas/Rapat', type: 'expense' },
-      { workspace_id: 'kopdes', name: 'Lain-lain', type: 'expense' }
-    ];
-
-    const categories = categoriesData.map((c) => ({
+    const categories = DEFAULT_CATEGORIES.map((c) => ({
       id: uuidv7(),
       workspace_id: c.workspace_id,
       name: c.name,
@@ -455,4 +492,340 @@ export async function softDeleteCategory(id) {
     sync_status: 'pending'
   });
 }
+
+/**
+ * Statistik Database & Storage (Modul 1C)
+ */
+export async function getDatabaseStats() {
+  const [accounts, categories, transactions, txItems] = await Promise.all([
+    db.accounts.toArray(),
+    db.categories.toArray(),
+    db.transactions.toArray(),
+    db.transaction_items.toArray()
+  ]);
+
+  let attachmentCount = 0;
+  let attachmentBytes = 0;
+  let softDeletedCount = 0;
+
+  for (const a of accounts) if (a.deleted_at) softDeletedCount++;
+  for (const c of categories) if (c.deleted_at) softDeletedCount++;
+  for (const it of txItems) if (it.deleted_at) softDeletedCount++;
+
+  for (const tx of transactions) {
+    if (tx.deleted_at) {
+      softDeletedCount++;
+    } else if (tx.attachment_blob instanceof Blob) {
+      attachmentCount++;
+      attachmentBytes += tx.attachment_blob.size || 0;
+    }
+  }
+
+  return {
+    activeAccounts: accounts.filter((a) => !a.deleted_at).length,
+    activeCategories: categories.filter((c) => !c.deleted_at).length,
+    activeTransactions: transactions.filter((t) => !t.deleted_at).length,
+    activeItems: txItems.filter((it) => !it.deleted_at).length,
+    attachmentCount,
+    attachmentKB: Math.round(attachmentBytes / 1024),
+    softDeletedCount
+  };
+}
+
+/**
+ * Database Compaction (PRD 6.2.3): Bersihkan secara permanen baris yang sudah di-soft-delete
+ */
+export async function compactDatabase() {
+  let purged = 0;
+  await db.transaction(
+    'rw',
+    db.accounts,
+    db.categories,
+    db.transactions,
+    db.transaction_items,
+    async () => {
+      const delAccounts = await db.accounts.filter((a) => Boolean(a.deleted_at)).primaryKeys();
+      const delCategories = await db.categories.filter((c) => Boolean(c.deleted_at)).primaryKeys();
+      const delTxs = await db.transactions.filter((t) => Boolean(t.deleted_at)).primaryKeys();
+      const delItems = await db.transaction_items.filter((it) => Boolean(it.deleted_at)).primaryKeys();
+
+      if (delAccounts.length) await db.accounts.bulkDelete(delAccounts);
+      if (delCategories.length) await db.categories.bulkDelete(delCategories);
+      if (delTxs.length) await db.transactions.bulkDelete(delTxs);
+      if (delItems.length) await db.transaction_items.bulkDelete(delItems);
+
+      purged = delAccounts.length + delCategories.length + delTxs.length + delItems.length;
+    }
+  );
+  return purged;
+}
+
+/**
+ * Ekspor seluruh isi database ke objek JSON-ready (termasuk serialisasi Blob struk WebP)
+ */
+export async function exportDatabasePayload({ includeAttachments = true } = {}) {
+  const [workspaces, accounts, categories, transactions, transaction_items] = await Promise.all([
+    db.workspaces.toArray(),
+    db.accounts.toArray(),
+    db.categories.toArray(),
+    db.transactions.toArray(),
+    db.transaction_items.toArray()
+  ]);
+
+  const serializedTransactions = [];
+  for (const tx of transactions) {
+    const copy = { ...tx };
+    if (includeAttachments && tx.attachment_blob instanceof Blob) {
+      copy.attachment_blob = await blobToSerializable(tx.attachment_blob);
+    } else {
+      copy.attachment_blob = null;
+    }
+    serializedTransactions.push(copy);
+  }
+
+  return {
+    app: 'buku-kas-multi-workspace',
+    schema_version: 2,
+    exported_at: new Date().toISOString(),
+    data: {
+      workspaces,
+      accounts,
+      categories,
+      transactions: serializedTransactions,
+      transaction_items
+    }
+  };
+}
+
+/**
+ * Restore objek hasil backup ke dalam Dexie.js
+ * @param {object} payload - Objek yang sudah didekripsi (memiliki properti `data`)
+ * @param {object} options - `{ mode: 'merge' | 'replace' }`
+ */
+export async function restoreDatabasePayload(payload, { mode = 'merge' } = {}) {
+  const data = payload?.data || payload;
+  if (!data || (!Array.isArray(data.transactions) && !Array.isArray(data.accounts))) {
+    throw new Error('Format file backup tidak valid atau tabel tidak ditemukan.');
+  }
+
+  const workspaces = Array.isArray(data.workspaces) ? data.workspaces : [];
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const rawTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+  const transactionItems = Array.isArray(data.transaction_items) ? data.transaction_items : [];
+
+  const hydratedTransactions = rawTransactions.map((tx) => ({
+    ...tx,
+    amount: Math.round(Number(tx.amount) || 0),
+    attachment_blob: serializableToBlob(tx.attachment_blob)
+  }));
+
+  await db.transaction(
+    'rw',
+    db.workspaces,
+    db.accounts,
+    db.categories,
+    db.transactions,
+    db.transaction_items,
+    async () => {
+      if (mode === 'replace') {
+        await Promise.all([
+          db.workspaces.clear(),
+          db.accounts.clear(),
+          db.categories.clear(),
+          db.transactions.clear(),
+          db.transaction_items.clear()
+        ]);
+      }
+
+      if (workspaces.length > 0) await db.workspaces.bulkPut(workspaces);
+      if (accounts.length > 0) await db.accounts.bulkPut(accounts);
+      if (categories.length > 0) await db.categories.bulkPut(categories);
+      if (hydratedTransactions.length > 0) await db.transactions.bulkPut(hydratedTransactions);
+      if (transactionItems.length > 0) await db.transaction_items.bulkPut(transactionItems);
+    }
+  );
+
+  // Pastikan workspace default tetap ada jika kosong
+  await seedDatabase();
+
+  return {
+    accounts: accounts.length,
+    categories: categories.length,
+    transactions: hydratedTransactions.length,
+    items: transactionItems.length
+  };
+}
+
+/**
+ * Import daftar baris transaksi hasil baca file Excel (.xlsx) ke Dexie.js
+ * Otomatis mencocokkan nama dompet & kategori atau membuatnya jika belum ada.
+ */
+export async function importTransactionsFromXlsxRows(parsedRows = []) {
+  if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+    throw new Error('Tidak ada baris transaksi untuk di-import.');
+  }
+
+  const now = new Date().toISOString();
+  const [existingAccounts, existingCategories] = await Promise.all([
+    db.accounts.filter((a) => !a.deleted_at).toArray(),
+    db.categories.filter((c) => !c.deleted_at).toArray()
+  ]);
+
+  const accountsList = [...existingAccounts];
+  const categoriesList = [...existingCategories];
+  const newAccounts = [];
+  const newCategories = [];
+
+  function resolveAccountId(wsId, accName) {
+    const clean = String(accName || '').trim();
+    if (clean) {
+      const found = accountsList.find(
+        (a) => a.workspace_id === wsId && a.name.toLowerCase() === clean.toLowerCase()
+      );
+      if (found) return found.id;
+
+      // Buat dompet baru jika belum ada
+      const created = {
+        id: uuidv7(),
+        workspace_id: wsId,
+        name: clean,
+        type: clean.toLowerCase().includes('bank') || clean.toLowerCase().includes('bri') || clean.toLowerCase().includes('rekening')
+          ? 'bank'
+          : clean.toLowerCase().includes('wallet')
+            ? 'ewallet'
+            : 'cash',
+        initial_balance: 0,
+        updated_at: now,
+        deleted_at: null,
+        sync_status: 'pending'
+      };
+      accountsList.push(created);
+      newAccounts.push(created);
+      return created.id;
+    }
+
+    // Fallback ke dompet pertama pada workspace tersebut
+    const fallback = accountsList.find((a) => a.workspace_id === wsId);
+    return fallback ? fallback.id : '';
+  }
+
+  function resolveCategoryId(wsId, catName, txType) {
+    if (txType === 'transfer') return null;
+    const clean = String(catName || '').trim();
+    const catType = txType === 'income' ? 'income' : 'expense';
+
+    if (clean && !clean.toLowerCase().startsWith('transfer ke')) {
+      const found = categoriesList.find(
+        (c) => c.workspace_id === wsId && c.name.toLowerCase() === clean.toLowerCase()
+      );
+      if (found) return found.id;
+
+      const created = {
+        id: uuidv7(),
+        workspace_id: wsId,
+        name: clean,
+        type: catType,
+        keywords: '',
+        updated_at: now,
+        deleted_at: null,
+        sync_status: 'pending'
+      };
+      categoriesList.push(created);
+      newCategories.push(created);
+      return created.id;
+    }
+
+    const fallback = categoriesList.find((c) => c.workspace_id === wsId && c.type === catType);
+    return fallback ? fallback.id : null;
+  }
+
+  const txsToPut = [];
+  const itemsToPut = [];
+
+  for (const row of parsedRows) {
+    const wsId = row.workspace_id || 'personal';
+    const txId = row.id || uuidv7();
+    const accountId = resolveAccountId(wsId, row.accountName);
+    const toAccountId =
+      row.type === 'transfer' && row.toAccountName
+        ? resolveAccountId(wsId, row.toAccountName)
+        : null;
+    const categoryId = resolveCategoryId(wsId, row.categoryName, row.type);
+
+    let reimburseFromId = null;
+    if (
+      (row.metadata?.reimburse_status === 'pending' || row.metadata?.reimburse_status === 'settled') &&
+      wsId !== 'personal'
+    ) {
+      reimburseFromId = resolveAccountId('personal', row.metadata?.reimburseFromName || 'Dompet Tunai');
+    }
+
+    txsToPut.push({
+      id: txId,
+      workspace_id: wsId,
+      account_id: accountId,
+      to_account_id: toAccountId,
+      category_id: categoryId,
+      type: row.type || 'expense',
+      amount: Math.round(Number(row.amount) || 0),
+      date: row.date || now,
+      note: row.note || '',
+      metadata: {
+        no_bukti: row.metadata?.no_bukti || '',
+        unit_usaha: row.metadata?.unit_usaha || '',
+        pic_pihak: row.metadata?.pic_pihak || '',
+        reimburse_status: row.metadata?.reimburse_status || 'none',
+        reimburse_from_account_id: reimburseFromId,
+        reimburse_settled_at: row.metadata?.reimburse_status === 'settled' ? now : null
+      },
+      attachment_blob: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      sync_status: 'pending'
+    });
+
+    if (Array.isArray(row.items) && row.items.length > 0) {
+      row.items.forEach((it, idx) => {
+        if (it.name || it.amount > 0) {
+          itemsToPut.push({
+            id: uuidv7(),
+            transaction_id: txId,
+            workspace_id: wsId,
+            name: String(it.name || `Produk ${idx + 1}`).trim(),
+            amount: Math.round(Number(it.amount) || 0),
+            sort_order: idx,
+            created_at: now,
+            updated_at: now,
+            deleted_at: null,
+            sync_status: 'pending'
+          });
+        }
+      });
+    }
+  }
+
+  await db.transaction(
+    'rw',
+    db.accounts,
+    db.categories,
+    db.transactions,
+    db.transaction_items,
+    async () => {
+      if (newAccounts.length > 0) await db.accounts.bulkPut(newAccounts);
+      if (newCategories.length > 0) await db.categories.bulkPut(newCategories);
+      if (txsToPut.length > 0) await db.transactions.bulkPut(txsToPut);
+      if (itemsToPut.length > 0) await db.transaction_items.bulkPut(itemsToPut);
+    }
+  );
+
+  return {
+    importedCount: txsToPut.length,
+    newAccountsCount: newAccounts.length,
+    newCategoriesCount: newCategories.length
+  };
+}
+
+
 

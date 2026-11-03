@@ -193,13 +193,37 @@
     if (t === "debt") return "Utang Masuk";
     return "Pengeluaran";
   }
+
+  function handleKeydown(event) {
+    if (isOpen && event.key === "Escape") {
+      event.preventDefault();
+      stopListening();
+      onClose?.();
+    }
+  }
+
+  function handleBackdropClick(event) {
+    if (event.target === event.currentTarget) {
+      stopListening();
+      onClose?.();
+    }
+  }
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 {#if isOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
+    role="presentation"
+    onclick={handleBackdropClick}
     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/60 backdrop-blur-xs p-0 sm:p-4 overflow-y-auto"
   >
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="voice-modal-title"
+      tabindex="-1"
       class="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[95vh] flex flex-col"
     >
       <!-- Header -->
@@ -225,7 +249,10 @@
               stroke-linejoin="round"
             />
           </svg>
-          <h2 class="text-sm font-extrabold tracking-wide uppercase">
+          <h2
+            id="voice-modal-title"
+            class="text-sm font-extrabold tracking-wide uppercase"
+          >
             Input Suara Pintar
           </h2>
         </div>

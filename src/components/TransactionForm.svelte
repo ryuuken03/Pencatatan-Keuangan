@@ -997,8 +997,7 @@
                       {useReimburse ? " • Talangan" : ""}
                       {no_bukti ? ` • #${no_bukti}` : ""}
                     {:else}
-                      + Atur Tanggal, Rincian Produk, Struk, atau Talangan
-                      (Opsional)
+                      Rincian (Opsional)
                     {/if}
                   </span>
                   <span class="text-indigo-700 font-extrabold shrink-0 ml-2"

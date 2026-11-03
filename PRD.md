@@ -1,13 +1,14 @@
 # Product Requirements Document (PRD)
-## Aplikasi Pencatatan Keuangan Multi-Workspace (Pribadi, Usaha, Kopdes)
+## Aplikasi Pencatatan Keuangan Multi-Workspace (`Buku Kas` — Pribadi, Usaha, Kopdes)
 
 | Informasi Dokumen | Detail |
 | :--- | :--- |
-| **Versi Dokumen** | 1.0 (Draft Analisa) |
-| **Tanggal** | 2 November 2026 |
+| **Versi Dokumen** | 1.2 (Fase 1 & Fase 2 Selesai — Siap Fase 3) |
+| **Tanggal Update** | 3 November 2026 |
 | **Arsitektur Utama** | Offline-First PWA (Progressive Web App) |
-| **Tech Stack Frontend** | Svelte 5 + Vite + Tailwind CSS + Dexie.js (IndexedDB) |
-| **Target Backend (Bertahap)** | Fase 1: Offline Lokal $\rightarrow$ Fase 2: Supabase $\rightarrow$ Fase 3: Home Server (Go + SQLite/Postgres) |
+| **Tech Stack Frontend** | Svelte 5 + Vite 6 + Tailwind CSS v4 + Dexie.js (IndexedDB) |
+| **Aturan Permanen AI** | [`GEMINI.md`](./GEMINI.md) & [`.agents/rules/anti-ai-slop.md`](./.agents/rules/anti-ai-slop.md) |
+| **Target Backend (Bertahap)** | Fase 1: Offline Lokal $\rightarrow$ Fase 2: Supabase (Selesai) $\rightarrow$ Fase 3: Home Server (Go + SQLite/Postgres) |
 
 ---
 
@@ -26,14 +27,21 @@ Membangun aplikasi pencatatan keuangan yang **sangat ringan, aman, responsif (HP
    - Indikator fungsional: Hijau Tua (Pemasukan), Merah Tua (Pengeluaran), Biru (Transfer), Amber (Dana Talangan / Reimburse).
    - Ikon garis tipis (`16px–18px`) hanya digunakan sebagai penanda navigasi dan aksi, bukan hiasan.
 4. **Adaptive Layout (Responsif Sesuai Perangkat):**
-   - **Mobile View (< 768px & Layar Kecil iPhone SE):** Fokus pada kecepatan jempol. *Hero Balance Card* di atas, *Mini Wallet Cards* geser horizontal tanpa scrollbar kasar, daftar transaksi harian serta manajemen dompet dalam bentuk *Card View* proporsional, dan tombol aksi cepat di bawah.
-   - **Desktop/Laptop View ($\ge$ 768px):** Tampilan *Spreadsheet/Table View* dengan filter multi-kolom, rekap cepat per kategori/unit, dan tombol Export laporan.
+   - **Mobile View (`< 768px` & Layar Kecil iPhone SE):** Fokus pada kecepatan satu tangan (*Thumb Zone*):
+     - **Top Toolbar Ringkas:** Menampilkan ikon & nama aplikasi **`Buku Kas`**, nama buku kas aktif, indikator PIN, serta badge `Offline Ready`.
+     - **Hero Balance Card & 3 Kartu Metrik:** Menampilkan total saldo aktif (dengan tombol *Lihat Detail* untuk membuka modal rincian saldo per dompet) serta metrik *Pemasukan*, *Pengeluaran*, dan *Talangan*.
+     - **Swipeable Daily Transaction Cards:** Daftar transaksi dikelompokkan per hari; kartu dapat digeser ke kanan maupun ke kiri (*slide*) untuk membuka tombol **Edit** & **Hapus**, atau diketuk untuk membuka modal detail.
+     - **Bottom Navigation Bar 3-Kolom (Ikon di atas, Teks `10px` di bawah):**
+       1. `WorkspaceSwitcher` (*Buku Pribadi* | *Buku Usaha* | *Kopdes*) dengan pop-up *bottom sheet* ringkasan saldo tiap buku.
+       2. `Catat Transaksi` dengan pop-up *bottom sheet* 3 metode input (*Tambah Transaksi*, *Foto*, *Record Voice*).
+       3. `Pengaturan` dengan pop-up *bottom sheet* 4 menu (*Laporan & Excel*, *Back Up & PIN*, *Kategori*, *Dompet*).
+   - **Desktop/Laptop View ($\ge$ 768px):** Header horizontal (*Segmented Workspace Switcher* & deretan tombol aksi), tampilan *Spreadsheet/Table View* dengan filter lanjutan multi-kolom, rekap cepat per kategori/unit, serta fitur **Export & Import Excel (`.xlsx` Multi-Sheet)**.
 
 ---
 
 ## 3. Ruang Kerja (Multi-Workspace Architecture)
 
-Aplikasi memiliki **3 Buku Kas Utama (Workspace)** yang dapat diganti secara instan melalui *Segmented Switcher* di bagian atas layar:
+Aplikasi memiliki **3 Buku Kas Utama (Workspace)** yang dapat diganti secara instan melalui *Segmented Switcher* (Desktop) atau *Bottom Navbar* (Mobile):
 
 ### 3.1. Buku Pribadi (`personal`)
 - Fokus: Kebutuhan rumah tangga, gaji/pendapatan pribadi, tabungan, investasi, dan pengeluaran harian.
@@ -88,8 +96,9 @@ flowchart LR
   - `Dompet Kas` *(Compact Grid 2-3 kolom lengkap dengan info saldo)*.
   - `Kategori` *(Smart Quick Grid 4 kategori utama + Expandable Search Picker untuk memilih/mencari kategori lainnya tanpa membuat form memanjang)*.
   - `Catatan / Deskripsi Singkat`.
+  - `Rincian Item / Produk (Opsional)` *(Bisa ditambah/edit manual maupun otomatis dari hasil scan struk)*.
   - `Atribut Kopdes` *(Muncul khusus jika Workspace = Kopdes: Unit Usaha dalam Grid 2 kolom, No. Bukti, Pihak Terkait)*.
-  - `Lampiran Foto Nota` *(Opsional, hasil kompresi)*.
+  - `Lampiran Foto Nota` *(Opsional, hasil kompresi WebP)*.
 
 ### 4.2. Sumber 2: Input Foto Nota / Struk (Camera / Gallery $\rightarrow$ Form CRUD)
 1. **Akuisisi & Optimasi Memori/Storage:**
@@ -104,7 +113,7 @@ flowchart LR
      - **Mode Single Total:** Jika nota/kwitansi hanya berisi 1 nilai total tanpa rincian produk, menampilkan kartu ringkasan total tunggal yang bersih.
      - Mencari kata kunci `TOTAL`, `GRAND TOTAL`, `TOTAL BAYAR`, `SUBTOTAL`, atau jumlah item terpilih $\rightarrow$ mengisi kolom **Nominal**.
      - Mencari pola tanggal (`DD/MM/YYYY`, `DD-MM-YYYY`, atau `DD MMM YY HH:mm`) $\rightarrow$ mengisi kolom **Tanggal**.
-     - Mengambil nama toko/vendor beserta rangkuman produk terpilih $\rightarrow$ mengisi kolom **Catatan**, **No. Bukti**, **Pihak Terkait**, dan menyimpan rincian produk ke `metadata.items`.
+     - Mengambil nama toko/vendor beserta rangkuman produk terpilih $\rightarrow$ mengisi kolom **Catatan**, **No. Bukti**, **Pihak Terkait**, dan menyimpan rincian produk ke tabel `transaction_items`.
 3. **Verifikasi:** Membuka Form CRUD yang sudah terisi otomatis, menampilkan preview struk kecil di bawah, siap dikoreksi atau langsung klik **Simpan**.
 
 ### 4.3. Sumber 3: Voice-to-Text (Suara $\rightarrow$ Form CRUD)
@@ -124,7 +133,7 @@ flowchart LR
 
 Setiap entitas data di **Dexie.js (IndexedDB)** dirancang identik dengan skema **PostgreSQL / SQLite** agar migrasi berjalan mulus tanpa ubah struktur.
 
-### 5.1. Skema Tabel Inti
+### 5.1. Skema Tabel Inti (Dexie v2)
 
 #### A. Tabel `workspaces` (Buku Kas)
 - `id` (UUID / String: `'personal'`, `'business'`, `'kopdes'`)
@@ -144,6 +153,7 @@ Setiap entitas data di **Dexie.js (IndexedDB)** dirancang identik dengan skema *
 - `workspace_id`
 - `name` (Contoh: `'ATK & Fotokopi'`, `'Setoran Unit Toko'`)
 - `type` (`'income'` | `'expense'`)
+- `keywords` (String kata kunci opsional untuk auto-kategori cerdas)
 - `updated_at`, `deleted_at`, `sync_status`
 
 #### D. Tabel `transactions` (Transaksi Utama)
@@ -153,57 +163,66 @@ Setiap entitas data di **Dexie.js (IndexedDB)** dirancang identik dengan skema *
 - `to_account_id` (Nullable - untuk Transfer antar akun)
 - `category_id` (Relasi ke `categories.id`)
 - `type` (`'income'` | `'expense'` | `'transfer'` | `'debt'` | `'receivable'`)
-- `amount` (BigInt / Integer positif)
+- `amount` (Integer positif Rupiah bulat)
 - `date` (ISO 8601 Date String)
 - `note` (String)
 - `metadata` (JSON Object untuk data fleksibel):
   - `no_bukti`: String (Khusus Kopdes/Usaha)
   - `unit_usaha`: String (Khusus Kopdes)
   - `pic_pihak`: String (Nama anggota/vendor)
-  - `items`: Array `[{ id, name, amount }]` (Opsional - Rincian produk dari ekstraksi struk)
   - `reimburse_status`: `'none'` | `'pending'` | `'settled'`
   - `reimburse_from_account_id`: UUID (Jika ditalangi dompet pribadi)
+  - `reimburse_settled_at`: ISO Date String (Nullable)
 - `attachment_blob` (Blob WebP terkompresi / Nullable)
 - `created_at`, `updated_at`, `deleted_at` (Soft Delete)
 - `sync_status` (`'pending'` | `'synced'`)
 
+#### E. Tabel `transaction_items` (Rincian Produk Opsional 0..N per Transaksi)
+- `id` (UUID v7)
+- `transaction_id` (Relasi ke `transactions.id`)
+- `workspace_id` (`'personal'` | `'business'` | `'kopdes'`)
+- `name` (Nama produk/item)
+- `amount` (Integer positif Rupiah bulat)
+- `sort_order` (Integer urutan baris)
+- `created_at`, `updated_at`, `deleted_at`, `sync_status`
+
 ---
 
-## 6. Keamanan & Optimasi Resource
+## 6. Keamanan, Export/Import Excel (`.xlsx`), & Optimasi Resource
 
 ### 6.1. Keamanan (Mitigasi Celah Modern)
 1. **100% Client-Side Static Build:** Tidak menggunakan SSR/Server Middleware yang rentan terhadap *Auth Bypass*.
-2. **Minimal Dependency:** Format mata uang (`Rp`), tanggal, kalkulasi, dan parser suara dibuat dengan *native JavaScript APIs* (`Intl`, `WebCrypto`, `RegExp`) untuk mencegah *Supply-Chain Attack* dari package pihak ketiga.
-3. **App PIN Lock & Enkripsi Lokal:**
-   - Opsi mengunci aplikasi dengan PIN 6 digit.
-   - Mendukung enkripsi backup file menggunakan **WebCrypto API (`AES-GCM 256-bit`)**.
+2. **Minimal Dependency & Native `.xlsx` Engine:** Format mata uang (`Rp`), tanggal, kalkulasi, parser suara, dan pembaca/penulis file Excel (`.xlsx` Office Open XML Multi-Sheet) dibuat dengan *native JavaScript APIs* (`Intl`, `WebCrypto`, `DecompressionStream`, `RegExp`) untuk mencegah *Supply-Chain Attack*.
+3. **App PIN Lock & Enkripsi Backup Lokal:**
+   - Opsi mengunci aplikasi dengan **PIN 6 digit** (hash `SHA-256` + salt).
+   - Mendukung enkripsi & dekripsi file backup JSON menggunakan **WebCrypto API (`PBKDF2-SHA256` 100.000 iterasi + `AES-GCM 256-bit`)**.
 4. **Strict CSP (Content Security Policy):** Mencegah injeksi script (XSS) dan membatasi koneksi keluar hanya ke URL Supabase / Home Server yang diizinkan pengguna.
 
 ### 6.2. Optimasi Memori & Storage (HP & Laptop Celeron 4GB)
-1. **Virtual List / Pagination:** Menampilkan transaksi dengan *pagination* atau *virtual scrolling* sehingga meski ada 50.000 transaksi, RAM browser tetap di bawah `50 MB`.
+1. **Pagination Ringan:** Menampilkan transaksi dengan *pagination* (`50` transaksi per muatan) sehingga meski ada puluhan ribu transaksi, pemakaian RAM browser tetap di bawah `50 MB`.
 2. **Kompresi Gambar Otomatis:** Setiap struk dipaksa turun ke `< 80 KB` (WebP). 1.000 foto struk hanya memakan `~80 MB` storage.
-3. **Database Compaction:** Fitur pembersihan *soft-deleted records* dan ekspor arsip tahunan ke file lokal.
+3. **Database Compaction:** Fitur pembersihan *soft-deleted records* permanen dan ekspor cadangan ke file lokal.
 
 ---
 
 ## 7. Roadmap Implementasi Bertahap
 
-### Fase 1: Core Offline-First PWA (Fokus Saat Ini)
+### Fase 1: Core Offline-First PWA (Selesai 100%)
 - [x] Setup project **Svelte 5 + Vite + Tailwind CSS** (berjalan 100% lokal di browser).
-- [x] Implementasi database lokal **Dexie.js** dengan skema siap-sinkronisasi (`UUID v7`, `updated_at`, `deleted_at`, `sync_status`).
-- [x] Pembuatan UI Multi-Workspace (`Pribadi`, `Usaha`, `Kopdes`) dengan tema warna solid per buku dan layout responsif (Mobile Card View & Desktop Table View).
+- [x] Implementasi database lokal **Dexie.js** dengan skema siap-sinkronisasi (`UUID v7`, `updated_at`, `deleted_at`, `sync_status`, serta tabel terpisah `transaction_items`).
+- [x] Pembuatan UI Multi-Workspace (`Pribadi`, `Usaha`, `Kopdes`) dengan tema warna solid per buku dan layout responsif (Mobile Top Toolbar + Swipeable Card View + 3-Tab Bottom Navbar & Desktop Table View).
 - [x] Implementasi **Form CRUD Utama** + Kalkulator Nominal + Smart Picker Dompet/Kategori + Fitur Dana Talangan/Reimburse.
 - [x] Implementasi **Smart Voice-to-Text Parser (Bahasa Indonesia)** $\rightarrow$ masuk ke Form CRUD.
 - [x] Implementasi **Camera/Photo Compressor + OCR Struk Parser** $\rightarrow$ masuk ke Form CRUD.
-- [ ] Fitur **Laporan, Filter Tanggal/Unit Kopdes, Export CSV/Excel, Backup/Restore JSON, PIN Lock, & PWA Offline Manifest**.
+- [x] Fitur **Laporan Rekapitulasi, Filter Tanggal/Unit Kopdes, Export & Import Excel (`.xlsx` Multi-Sheet), Backup/Restore JSON Terenkripsi (`AES-GCM 256-bit`), PIN Lock 6 Digit, & PWA Offline Manifest**.
 
-### Fase 2: Cloud Database Sync (Supabase)
-- [ ] Menambahkan `SupabaseSyncAdapter`.
-- [ ] Sinkronisasi latar belakang (*Background Sync*): Hanya mengirim baris dengan `sync_status = 'pending'` dan menarik perubahan terbaru berdasarkan `updated_at` (*Delta Sync* agar hemat kuota & baterai).
-- [ ] Penerapan *Row Level Security (RLS)* di Supabase.
+### Fase 2: Cloud Database Sync (Supabase) (Selesai 100%)
+- [x] Menambahkan `SupabaseAdapter` native zero-bloat via browser `fetch` (PostgREST & GoTrue Auth).
+- [x] Sinkronisasi latar belakang (*Background Sync*): Hanya mengirim baris dengan `sync_status = 'pending'` dan menarik perubahan terbaru berdasarkan `updated_at` (*Delta Sync* hemat kuota & baterai).
+- [x] Skema database PostgreSQL + Penerapan *Row Level Security (RLS)* di `supabase/schema.sql` (1:1 dengan Dexie v2 termasuk `transaction_items`).
+- [x] Modal Pengaturan Sinkronisasi (`SyncSettingsModal.svelte`: Konfigurasi otomatis via `.env`, alur pendaftaran hemat kuota tanpa konfirmasi email, tampilan bersih hanya Logout & Sinkronisasi saat aktif), indikator status sync di Header Desktop & Mobile, serta auto-sync saat online.
 
 ### Fase 3: Migrasi ke Home Server (Laptop Intel Celeron, RAM 4GB, SSD 128GB)
 - [ ] Pembuatan Backend REST API super ringan dengan **Go (Golang)** + **SQLite (WAL Mode) / PostgreSQL**.
 - [ ] Migrasi data 1-klik dari Supabase/Backup JSON ke Home Server.
 - [ ] Mengarahkan URL Sync di pengaturan PWA ke IP/Domain Home Server (via Tailscale atau Cloudflare Tunnel).
-

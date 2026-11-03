@@ -8,6 +8,8 @@
     accountsMap = {},
     categoriesMap = {},
     onEdit,
+    onDelete,
+    onSettleReimburse,
     onClose,
   } = $props();
 
@@ -49,6 +51,53 @@
         : [],
   );
 
+  function getTypeBadge(type) {
+    switch (type) {
+      case "income":
+        return {
+          label: "PEMASUKAN",
+          cls: "bg-emerald-100/90 text-emerald-800 border-emerald-200",
+        };
+      case "expense":
+        return {
+          label: "PENGELUARAN",
+          cls: "bg-rose-100/90 text-rose-800 border-rose-200",
+        };
+      case "transfer":
+        return {
+          label: "TRANSFER",
+          cls: "bg-sky-100/90 text-sky-800 border-sky-200",
+        };
+      case "receivable":
+        return {
+          label: "PIUTANG / KASBON",
+          cls: "bg-amber-100/90 text-amber-800 border-amber-200",
+        };
+      case "debt":
+        return {
+          label: "UTANG MASUK",
+          cls: "bg-purple-100/90 text-purple-800 border-purple-200",
+        };
+      default:
+        return {
+          label: type || "TRANSAKSI",
+          cls: "bg-slate-100 text-slate-700 border-slate-200",
+        };
+    }
+  }
+
+  function getAmountColor(type) {
+    if (type === "income" || type === "debt") return "text-emerald-700";
+    if (type === "expense" || type === "receivable") return "text-rose-700";
+    return "text-sky-700";
+  }
+
+  function getAmountPrefix(type) {
+    if (type === "income" || type === "debt") return "+";
+    if (type === "expense" || type === "receivable") return "-";
+    return "⇄ ";
+  }
+
   function downloadReceipt() {
     if (!blobUrl || !transaction) return;
     const a = document.createElement("a");
@@ -59,11 +108,29 @@
 </script>
 
 {#if isOpen && transaction}
+  {@const badge = getTypeBadge(transaction.type)}
+  {@const accName = accountsMap[transaction.account_id]?.name || "-"}
+  {@const toAccName = transaction.to_account_id
+    ? accountsMap[transaction.to_account_id]?.name
+    : null}
+  {@const catName =
+    transaction.type === "transfer"
+      ? `Transfer ke ${toAccName || "-"}`
+      : categoriesMap[transaction.category_id]?.name || "Tanpa Kategori"}
+  {@const reimburseFromName = transaction.metadata?.reimburse_from_account_id
+    ? accountsMap[transaction.metadata.reimburse_from_account_id]?.name
+    : "Dompet Pribadi"}
+
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    onclick={(e) => {
+      if (e.target === e.currentTarget) onClose();
+    }}
     class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/70 backdrop-blur-xs p-0 sm:p-4 overflow-y-auto"
   >
     <div
-      class="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[95vh] flex flex-col"
+      class="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl border border-slate-200 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col"
     >
       <!-- Header -->
       <div
@@ -89,7 +156,7 @@
             />
           </svg>
           <h2 class="text-sm font-extrabold tracking-wide uppercase">
-            Detail & Lampiran Struk
+            Detail Transaksi
           </h2>
         </div>
         <button
@@ -118,56 +185,128 @@
       <div class="p-4 space-y-3.5 overflow-y-auto text-xs sm:text-sm">
         <!-- Ringkasan Transaksi -->
         <div
-          class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl flex items-start justify-between gap-3"
+          class="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3"
         >
-          <div class="min-w-0">
-            <div class="text-xs font-extrabold text-slate-900">
-              {categoriesMap[transaction.category_id]?.name || "Transaksi"}
-            </div>
-            {#if transaction.note}
-              <p class="text-xs text-slate-700 font-medium mt-0.5">
-                {transaction.note}
-              </p>
-            {/if}
-            <div class="text-[11px] text-slate-500 tabular-nums mt-1">
-              {formatDateShort(transaction.date)} • {accountsMap[
-                transaction.account_id
-              ]?.name || "-"}
-            </div>
-            {#if transaction.metadata?.no_bukti || transaction.metadata?.unit_usaha || transaction.metadata?.pic_pihak}
-              <div
-                class="flex flex-wrap gap-1.5 mt-1.5 text-[11px] text-slate-600"
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 space-y-1">
+              <span
+                class="inline-block px-2 py-0.5 text-[10px] font-extrabold border rounded-md {badge.cls}"
               >
-                {#if transaction.metadata?.unit_usaha}
-                  <span
-                    class="px-1.5 py-0.5 bg-slate-200/80 rounded font-semibold"
-                    >{transaction.metadata.unit_usaha}</span
-                  >
-                {/if}
-                {#if transaction.metadata?.no_bukti}
-                  <span class="font-bold tabular-nums"
-                    >#{transaction.metadata.no_bukti}</span
-                  >
-                {/if}
-                {#if transaction.metadata?.pic_pihak}
-                  <span>• PIC: {transaction.metadata.pic_pihak}</span>
-                {/if}
+                {badge.label}
+              </span>
+              <div class="text-sm font-extrabold text-slate-900">
+                {catName}
+              </div>
+            </div>
+
+            <div class="text-right shrink-0">
+              <div
+                class="text-base sm:text-lg font-extrabold tabular-nums {getAmountColor(
+                  transaction.type,
+                )}"
+              >
+                {getAmountPrefix(transaction.type)}{formatIDR(
+                  transaction.amount,
+                )}
+              </div>
+              {#if blobSizeKB > 0}
+                <span
+                  class="inline-block mt-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md text-[10px] font-extrabold tabular-nums"
+                >
+                  Struk WebP • {blobSizeKB} KB
+                </span>
+              {/if}
+            </div>
+          </div>
+
+          {#if transaction.note}
+            <div
+              class="pt-2 border-t border-slate-200/80 text-xs text-slate-800 font-medium break-words"
+            >
+              {transaction.note}
+            </div>
+          {/if}
+
+          <!-- Grid Info Tanggal, Dompet, dan Metadata -->
+          <div
+            class="pt-2 border-t border-slate-200/80 grid grid-cols-2 gap-2 text-[11px]"
+          >
+            <div>
+              <span class="text-slate-400 font-semibold block">Waktu</span>
+              <span class="text-slate-700 font-bold tabular-nums"
+                >{formatDateShort(transaction.date)}</span
+              >
+            </div>
+            <div>
+              <span class="text-slate-400 font-semibold block"
+                >Dompet / Akun</span
+              >
+              <span class="text-slate-800 font-bold">
+                {accName}{toAccName ? ` → ${toAccName}` : ""}
+              </span>
+            </div>
+
+            {#if transaction.metadata?.unit_usaha}
+              <div>
+                <span class="text-slate-400 font-semibold block"
+                  >Unit Usaha</span
+                >
+                <span class="text-slate-800 font-bold"
+                  >{transaction.metadata.unit_usaha}</span
+                >
+              </div>
+            {/if}
+
+            {#if transaction.metadata?.no_bukti}
+              <div>
+                <span class="text-slate-400 font-semibold block"
+                  >No. Bukti / Nota</span
+                >
+                <span class="text-slate-800 font-bold tabular-nums"
+                  >#{transaction.metadata.no_bukti}</span
+                >
+              </div>
+            {/if}
+
+            {#if transaction.metadata?.pic_pihak}
+              <div class="col-span-2">
+                <span class="text-slate-400 font-semibold block"
+                  >PIC / Pihak Terkait</span
+                >
+                <span class="text-slate-800 font-bold"
+                  >{transaction.metadata.pic_pihak}</span
+                >
               </div>
             {/if}
           </div>
 
-          <div class="text-right shrink-0">
-            <div class="text-base font-extrabold tabular-nums text-slate-900">
-              {formatIDR(transaction.amount)}
-            </div>
-            {#if blobSizeKB > 0}
-              <span
-                class="inline-block mt-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md text-[10px] font-extrabold tabular-nums"
-              >
-                WebP • {blobSizeKB} KB
+          <!-- Status Reimburse / Dana Talangan -->
+          {#if transaction.metadata?.reimburse_status === "pending"}
+            <div
+              class="pt-2 border-t border-amber-200/80 flex items-center justify-between gap-2 bg-amber-50 px-3 py-2 rounded-xl"
+            >
+              <span class="text-[11px] font-medium text-amber-900">
+                Belum Diganti • Ditalangi: <strong class="font-bold"
+                  >{reimburseFromName}</strong
+                >
               </span>
-            {/if}
-          </div>
+              {#if onSettleReimburse}
+                <button
+                  type="button"
+                  onclick={() => onSettleReimburse(transaction.id)}
+                  class="px-2.5 py-1 bg-amber-700 text-white text-[11px] font-bold rounded-lg hover:bg-amber-800 shrink-0 cursor-pointer shadow-2xs"
+                >
+                  Tandai Diganti
+                </button>
+              {/if}
+            </div>
+          {:else if transaction.metadata?.reimburse_status === "settled"}
+            <div
+              class="pt-2 border-t border-slate-200/80 text-[11px] text-emerald-700 font-bold"
+            >
+              ✓ Reimburse Selesai (Sudah diganti ke {reimburseFromName})
+            </div>
+          {/if}
         </div>
 
         <!-- Daftar Rincian Produk (Tabel `transaction_items`) -->
@@ -179,7 +318,6 @@
               class="px-3.5 py-2 bg-slate-100 border-b border-slate-200 text-[11px] font-extrabold uppercase text-slate-600 flex items-center justify-between"
             >
               <span>Rincian Produk ({txItems.length} item)</span>
-              <!-- <span class="text-[10px] font-mono text-slate-400 lowercase">transaction_items</span> -->
             </div>
             <div class="divide-y divide-slate-200/70">
               {#each txItems as item (item.id || item.name)}
@@ -199,31 +337,17 @@
         <!-- Gambar Lampiran Struk -->
         {#if blobUrl}
           <div
-            class="bg-slate-900/5 border border-slate-200 rounded-2xl p-3 flex flex-col items-center justify-center"
+            class="bg-slate-900/5 border border-slate-200 rounded-2xl p-3 flex flex-col items-center justify-center gap-2"
           >
             <img
               src={blobUrl}
               alt="Foto Nota / Struk"
-              class="max-h-[55vh] w-auto object-contain rounded-xl border border-slate-300 bg-white shadow-sm"
+              class="max-h-[50vh] w-auto object-contain rounded-xl border border-slate-300 bg-white shadow-sm"
             />
-          </div>
-        {:else}
-          <!-- <div
-            class="p-6 text-center text-slate-400 text-xs bg-slate-50 rounded-2xl border border-slate-200"
-          >
-            Tidak ada lampiran gambar pada transaksi ini.
-          </div> -->
-        {/if}
-
-        <!-- Footer Aksi -->
-        <div
-          class="flex items-center justify-between gap-2 pt-2 border-t border-slate-200"
-        >
-          {#if blobUrl}
             <button
               type="button"
               onclick={downloadReceipt}
-              class="px-3 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer inline-flex items-center gap-1.5"
+              class="px-3 py-1.5 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl cursor-pointer inline-flex items-center gap-1.5 shadow-2xs"
             >
               <svg
                 class="w-3.5 h-3.5"
@@ -238,7 +362,37 @@
                   stroke-linejoin="round"
                 />
               </svg>
-              <span>Unduh WebP</span>
+              <span>Unduh Foto Struk ({blobSizeKB} KB)</span>
+            </button>
+          </div>
+        {/if}
+
+        <!-- Footer Aksi: Hapus, Edit, Tutup -->
+        <div
+          class="flex items-center justify-between gap-2 pt-3 border-t border-slate-200"
+        >
+          {#if onDelete}
+            <button
+              type="button"
+              onclick={async () => {
+                await onDelete(transaction.id);
+              }}
+              class="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl cursor-pointer inline-flex items-center gap-1.5 transition-colors"
+            >
+              <svg
+                class="w-3.5 h-3.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Hapus</span>
             </button>
           {:else}
             <div></div>
@@ -253,9 +407,22 @@
                   onClose();
                   onEdit(tx);
                 }}
-                class="px-3.5 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded-xl hover:bg-slate-50 cursor-pointer"
+                class="px-3.5 py-2 text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 cursor-pointer inline-flex items-center gap-1.5 transition-colors"
               >
-                Edit
+                <svg
+                  class="w-3.5 h-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span>Edit</span>
               </button>
             {/if}
             <button

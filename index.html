@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!-- Strict Content Security Policy (PRD 6.1.4) -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' blob: data:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com https://*.supabase.co http://localhost:* http://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self';"
+    />
     <title>Buku Kas — Pribadi, Usaha & Manager Kopdes</title>
     <meta
       name="description"
@@ -19,7 +24,6 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png" />
-    <link rel="manifest" href="/manifest.webmanifest" />
 
     <!-- Typography: Plus Jakarta Sans -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
