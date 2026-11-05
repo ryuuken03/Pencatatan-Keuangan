@@ -101,13 +101,16 @@ function applyHighContrastGrayscale(ctx, width, height) {
       const ratio = gray / localMean;
 
       let adjusted;
-      if (ratio >= 0.93) {
+      if (ratio >= 0.94) {
         // Area kertas (baik terang maupun di bawah bayangan) dibuat putih bersih
-        adjusted = Math.min(255, Math.round(242 + (ratio - 0.93) * 180));
+        adjusted = Math.min(255, Math.round(245 + (ratio - 0.94) * 160));
+      } else if (ratio <= 0.60) {
+        // Area tinta pekat
+        adjusted = 15;
       } else {
-        // Area tinta teks dipertegas secara proporsional agar tetap halus (anti-aliased) untuk OCR
-        const norm = Math.max(0, (ratio - 0.42) / 0.51);
-        adjusted = Math.round(norm * norm * 225);
+        // Transisi halus (anti-aliased) agar lekukan kertas lecek tidak menjadi garis hitam pekat & dot-matrix tidak hancur
+        const t = (ratio - 0.60) / 0.34;
+        adjusted = Math.round(15 + t * 230);
       }
 
       const idx = (rowOffset + x) * 4;

@@ -1,5 +1,12 @@
 import { KOPDES_UNITS } from '../db.js';
 import { matchBestCategory } from './categoryMatcher.js';
+import {
+  buildFuzzyIndex,
+  findBestFuzzyMatch,
+  buildAliasIndex,
+  findMatchWithAliases,
+  DEFAULT_FUZZY_THRESHOLD
+} from '../utils/fuzzyMatcher.js';
 
 const INDONESIAN_MONTHS = {
   jan: 1, januari: 1,
@@ -123,6 +130,7 @@ export function extractReceiptTotal(lines, items = []) {
   const changeLinePattern = /\b(kembali|kembalian|change|uang\s*kecil)\b/i;
 
   // 1. Cari dari bawah ke atas untuk Explicit Total (TOTAL BELANJA, Total Harga, Pembayaran Sebenarnya, PURCHASE)
+  let explicitTotal = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (ignorePattern.test(line) || tableHeaderPattern.test(line)) continue;
@@ -130,7 +138,8 @@ export function extractReceiptTotal(lines, items = []) {
     if (explicitTotalPattern.test(line)) {
       const amounts = extractAmountsFromLine(line);
       if (amounts.length > 0) {
-        return amounts[amounts.length - 1];
+        explicitTotal = amounts[amounts.length - 1];
+        break;
       }
       // Jika angka berada di baris tepat di bawahnya (karena pemisahan blok OCR)
       if (i + 1 < lines.length) {
@@ -138,7 +147,8 @@ export function extractReceiptTotal(lines, items = []) {
         if (!ignorePattern.test(nextLine) && !cashTenderedPattern.test(nextLine)) {
           const nextAmounts = extractAmountsFromLine(nextLine);
           if (nextAmounts.length > 0) {
-            return nextAmounts[nextAmounts.length - 1];
+            explicitTotal = nextAmounts[nextAmounts.length - 1];
+            break;
           }
         }
       }
@@ -146,25 +156,29 @@ export function extractReceiptTotal(lines, items = []) {
   }
 
   // 2. Cari Generic Total / Subtotal (dari bawah ke atas)
+  let genericTotal = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (ignorePattern.test(line) || tableHeaderPattern.test(line)) continue;
     if (genericTotalPattern.test(line)) {
       const amounts = extractAmountsFromLine(line);
       if (amounts.length > 0) {
-        return amounts[amounts.length - 1];
+        genericTotal = amounts[amounts.length - 1];
+        break;
       }
     }
   }
 
-  // 3. Cek pembayaran Non-Tunai (biasanya pas sesuai tagihan, misal "NON TUNAI : 9,200")
+  // 3. Cek pembayaran Non-Tunai / Purchase (biasanya pas sesuai tagihan, misal "NON TUNAI : 9,200" atau "PURCHASE:9,200")
+  let nonCashAmount = 0;
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (ignorePattern.test(line)) continue;
     if (nonCashPaymentPattern.test(line)) {
       const amounts = extractAmountsFromLine(line);
       if (amounts.length > 0) {
-        return amounts[amounts.length - 1];
+        nonCashAmount = amounts[amounts.length - 1];
+        break;
       }
     }
   }
@@ -182,20 +196,37 @@ export function extractReceiptTotal(lines, items = []) {
       if (amounts.length > 0) tenderedAmount = amounts[amounts.length - 1];
     }
   }
+  let cashDiff = 0;
   if (tenderedAmount > 0 && changeAmount > 0 && tenderedAmount > changeAmount) {
-    return tenderedAmount - changeAmount;
+    cashDiff = tenderedAmount - changeAmount;
   }
 
-  // 5. Jika daftar item produk berhasil diekstrak, gunakan penjumlahan seluruh item
-  if (items && items.length > 0) {
-    const itemsSum = items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
-    if (itemsSum > 0) return itemsSum;
+  const itemsSum = items && items.length > 0
+    ? items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0)
+    : 0;
+
+  // 5. Rekonsiliasi & Koreksi Artefak Titik Dua (Colon Artifact) pada Total:
+  // Pada printer thermal dot-matrix, tanda titik dua ": 9,200" sering terbaca OCR sebagai "19,200" (titik dua menyatu menjadi angka 1)
+  const candidateTotal = explicitTotal || genericTotal;
+  if (candidateTotal > 0) {
+    // Koreksi jika angka berawalan '1' dan berakhiran persis dengan itemsSum atau nonCashAmount
+    if (itemsSum > 0 && candidateTotal > itemsSum && String(candidateTotal) === '1' + String(itemsSum)) {
+      return itemsSum;
+    }
+    if (nonCashAmount > 0 && candidateTotal > nonCashAmount && String(candidateTotal) === '1' + String(nonCashAmount)) {
+      return nonCashAmount;
+    }
+    // Jika ada items yang valid dan nonCash sama persis dengan itemsSum, gunakan itemsSum
+    if (itemsSum > 0 && nonCashAmount === itemsSum && candidateTotal !== itemsSum) {
+      return itemsSum;
+    }
+    return candidateTotal;
   }
 
-  // 6. Fallback ke baris pembayaran tunai
-  if (tenderedAmount > 0) {
-    return tenderedAmount;
-  }
+  if (nonCashAmount > 0) return nonCashAmount;
+  if (cashDiff > 0) return cashDiff;
+  if (itemsSum > 0) return itemsSum;
+  if (tenderedAmount > 0) return tenderedAmount;
 
   // 7. Fallback terakhir: angka terbesar yang bukan baris terlarang
   let maxCandidate = 0;
@@ -211,6 +242,170 @@ export function extractReceiptTotal(lines, items = []) {
 }
 
 /**
+ * Normalisasi tipografi generik nama produk (independen dari merek dagang apa pun):
+ * - Huruf S terbaca di depan angka volume/berat: "S00ML" -> "500ML", "S00GR" -> "500GR"
+ * - Typo akhiran kuantitas: "2pcg" / "2pca" / "2pcq" -> "2pcs"
+ * - Spasi ganda dirapatkan
+ * Koreksi leksikal nama barang ditangani fuzzyMatcher berbasis riwayat transaction_items.
+ */
+export function normalizeItemNameTypography(name) {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .replace(/\b[sS](\d{2,3}(?:ml|gr|g)\b)/gi, '5$1')
+    .replace(/\b(\d+)\s*pc[gaq]\b/gi, '$1pcs')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Pecah nama item hasil parser menjadi { prefix qty "2x ", nama inti, sufiks "(varian)" / "(-diskon)" }
+ */
+function splitItemName(name) {
+  const s = String(name || '').trim();
+  const qtyMatch = s.match(/^(\d{1,3}x\s+)/i);
+  const qtyPrefix = qtyMatch ? qtyMatch[1] : '';
+  const rest = s.slice(qtyPrefix.length);
+  const suffixMatch = rest.match(/((?:\s*\([^()]*\))+)\s*$/);
+  const suffix = suffixMatch ? suffixMatch[1] : '';
+  const base = (suffix ? rest.slice(0, rest.length - suffix.length) : rest).trim();
+  return { qtyPrefix, base: base || rest.trim(), suffix: base ? suffix : '' };
+}
+
+/**
+ * Ambil nama inti (tanpa qty & sufiks varian/diskon) dari daftar nama item riwayat.
+ * Nama default "Produk N" dibuang karena bukan nama barang nyata.
+ */
+export function extractItemHistoryNames(names = []) {
+  const out = [];
+  for (const n of names) {
+    const { base } = splitItemName(n);
+    if (base && !/^produk\s+\d+$/i.test(base)) out.push(base);
+  }
+  return out;
+}
+
+/**
+ * Indeks fuzzy siap pakai dari nama item riwayat (urutkan terbaru dulu agar koreksi terakhir menang).
+ */
+export function buildItemHistoryIndex(names = []) {
+  return buildFuzzyIndex(extractItemHistoryNames(names));
+}
+
+/**
+ * Indeks alias OCR siap pakai
+ */
+export function buildItemAliasesIndex(aliases = []) {
+  return buildAliasIndex(aliases);
+}
+
+/**
+ * Cocokkan nama item OCR ke kamus alias & riwayat barang lokal.
+ * Urutan prioritas:
+ * 1. Alias Exact Match (100%)
+ * 2. Alias Fuzzy Match (>= threshold)
+ * 3. History Fuzzy Match (>= threshold)
+ * Setiap item selalu memiliki `original_ocr_name` untuk memungkinkan feedback loop ke item_aliases saat diedit.
+ */
+export function matchItemsWithHistory(
+  items = [],
+  itemHistory = [],
+  itemAliases = null,
+  threshold = DEFAULT_FUZZY_THRESHOLD
+) {
+  if (!items || items.length === 0) return [];
+
+  const historyIndex = itemHistory
+    ? itemHistory.__fuzzyIndex
+      ? itemHistory
+      : buildFuzzyIndex(extractItemHistoryNames(itemHistory))
+    : null;
+
+  const aliasIndex = itemAliases
+    ? itemAliases.exactMap && itemAliases.list
+      ? itemAliases
+      : buildAliasIndex(itemAliases)
+    : null;
+
+  return items.map((it) => {
+    const rawName = String(it.name || '').trim();
+    const { qtyPrefix, base, suffix } = splitItemName(rawName);
+
+    // Default item jika tidak ada match
+    const baseItem = {
+      ...it,
+      original_ocr_name: rawName,
+      original_base_name: base,
+      matched_from_alias: false,
+      matched_from_history: false,
+      match_score: 0,
+      match_source: 'ocr'
+    };
+
+    if ((!historyIndex || historyIndex.length === 0) && (!aliasIndex || aliasIndex.exactMap.size === 0)) {
+      return baseItem;
+    }
+
+    const result = findMatchWithAliases(base, {
+      aliasIndex,
+      historyIndex,
+      threshold
+    });
+
+    if (!result) {
+      return baseItem;
+    }
+
+    const isAlias = result.source.startsWith('alias');
+    return {
+      ...baseItem,
+      name: `${qtyPrefix}${result.match}${suffix}`,
+      original_ocr_name: rawName,
+      matched_from_alias: isAlias,
+      matched_from_history: !isAlias,
+      match_score: Math.round(result.score * 100) / 100,
+      match_source: result.source
+    };
+  });
+}
+
+/**
+ * Validasi apakah nama kandidat produk adalah nama barang yang sah (bukan kode invoice, tanggal, atau noise OCR)
+ */
+export function isValidItemName(name) {
+  if (!name || typeof name !== 'string') return false;
+  const s = name.trim();
+  if (s.length < 3) return false;
+
+  // 1. Abaikan baris metadata/header/footer yang lolos
+  if (/^(?:npwp|wp\b|jl\.?|jln\.?|jalan|faktur|nota|struk|kasir|cashier|trx|inv|no\.?)/i.test(s)) {
+    return false;
+  }
+
+  // 2. Bersihkan penanda ukuran/volume (misal 500ml, 1kg, 250gr, 10pcs) sebelum validasi kata
+  const withoutUnits = s.replace(/\b\d+(?:ml|gr|g|kg|l|cm|mm|pcs|pack|btl|cup)\b/gi, ' ');
+
+  // 3. Nama barang harus memiliki setidaknya SATU kata nyata dengan >= 3 huruf murni tanpa angka
+  // (misal "PENYEGAR" di "KAKI3 PENYEGAR 500ML", "BREAD" di "BREAD KASUR", "CFE" di "K/A B.CFE")
+  const words = withoutUnits
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const hasValidWord = words.some((w) => /^[a-zA-Z]{3,}$/.test(w));
+  if (!hasValidWord) return false;
+
+  // 4. Jika memuat kode serial/invoice (kata yang berisi huruf bercampur >= 4 digit angka, misal H22935 atau F16D914330)
+  if (/\b[a-zA-Z]+\d{4,}\b|\b\d{4,}[a-zA-Z]+\b/.test(withoutUnits)) {
+    return false;
+  }
+
+  // 5. Rasio huruf alfanumerik harus wajar
+  const alphaCount = (s.match(/[a-zA-Z0-9]/g) || []).length;
+  if (alphaCount / s.length < 0.6) return false;
+
+  return true;
+}
+
+/**
  * Ekstraksi Daftar Produk / Item Belanja dari baris-baris struk.
  * Mengembalikan array [{ id, name, amount }] jika struk memiliki rincian produk,
  * atau [] jika struk hanya berisi 1 nilai total (kwitansi tunggal).
@@ -220,7 +415,7 @@ export function extractReceiptItems(lines, merchant = '') {
 
   // Header kolom tabel (misal "Nama Produk  Harga  Jumlah  Subtotal" pada Momoyo) -> lewati, jangan break!
   const tableHeaderPattern =
-    /\b(nama\s*produk|nama\s*barang|nama\s*item|deskripsi)\b|\b(harga)\b.*\b(jumlah|qty|subtotal|total)\b/i;
+    /\b([nk]ama\s*produk|[nk]ama\s*barang|[nk]ama\s*item|deskripsi|item\s*pembelian|item\s*penjualan|rincian\s*pembelian|daftar\s*pesanan|detail\s*order)\b|\b(harga)\b.*\b(jumlah|qty|subtota[lt]|total|luna)\b/i;
 
   // Kata kunci metadata/header struk (tidak boleh masuk ke daftar produk)
   const metadataLinePattern =
@@ -237,7 +432,7 @@ export function extractReceiptItems(lines, merchant = '') {
     /\b(tunai|cash|kartu|debit|kredit|qris|bca|bri|mandiri|bni|bsi|wondr|trxid|purchase|statis|gopay|ovo|dana|transfer|bayar|kembali|kembalian|change|uang\s*kecil|ppn|dpp|pajak|tax|anda\s*hemat|status|pembayaran|terima\s*kasih|thank\s*you|lunas|nominal|nota|struk|kwitansi|faktur|invoice|pendapat\s*anda|kritik\s*dan\s*saran|kemitraan|partnership)\b/i;
 
   const variantModifierPattern =
-    /\b(normal|less|more|extra|no\s+ice|ice|sugar|gula|level|spicy|pedas|size|regular|large|medium|small|hot|cold|hangat|dingin|topping|addon)\b/i;
+    /\b(normal|less|more|extra|no\s+ice|ice|sugar|gula|level|spicy|pedas|size|regular|large|medium|small|hot|cold|hangat|dingin|topping|addon|norma)\b/i;
 
   const items = [];
   let pendingItemName = '';
@@ -269,6 +464,7 @@ export function extractReceiptItems(lines, merchant = '') {
           const lastItem = items[items.length - 1];
           if (discVal > 0 && discVal < lastItem.amount) {
             lastItem.amount -= discVal;
+            lastItem.name += ` (-${discVal.toLocaleString('id-ID')})`;
           }
         }
       }
@@ -310,22 +506,65 @@ export function extractReceiptItems(lines, merchant = '') {
     // Menangani:
     // - "23,900" (1 angka harga)
     // - "1 23900 23,900" (format Indomaret: Qty HargaSatuan Subtotal saat terpisah baris)
-    // - "16.000 1 16.000" (format Momoyo: HargaSatuan Qty Subtotal di bawah nama produk)
+    // - "16.000 1 16.000" atau "eee 16.000 116.000" (format Momoyo: HargaSatuan Qty Subtotal di bawah nama produk)
     // - "2 x 15.000 30.000" (format perkalian qty)
-    const isNumericPriceRow = /^(?:rp\.?\s*|\d|[.,xX@*\s\-])+$/i.test(rawLine) && /\d{3,}/.test(rawLine);
+    // - "1 x @Rp. 14.000 f°. 14.400 4" (format perkalian qty + unit price + subtotal)
+    const rowAmounts = extractAmountsFromLine(rawLine);
+    const nonNumLetters = rawLine
+      .replace(/(?:rp|fr|fp|ip)\.?|[fFrRiI][°oO\.]*|[°§©®™@]/gi, ' ')
+      .replace(/[\d.,xX@*\-–—+:=()\/\\|#~`$'"”’“\s]/g, '')
+      .trim();
+    const isLettersOnlyNoise = !nonNumLetters || /^(.)\1+$/i.test(nonNumLetters) || nonNumLetters.length <= 3;
+    const isExplicitQtyRow = /^\s*(\d{1,2})\s*[xX@*]/i.test(rawLine);
+    const isNumericPriceRow =
+      rowAmounts.length > 0 &&
+      (
+        /^(?:rp\.?\s*|\d|[.,xX@*\s\-])+$/i.test(rawLine) ||
+        isExplicitQtyRow ||
+        (pendingItemName && isLettersOnlyNoise)
+      );
+
     if (isNumericPriceRow && pendingItemName) {
-      const rowAmounts = extractAmountsFromLine(rawLine);
-      if (rowAmounts.length > 0) {
-        const itemAmount = rowAmounts[rowAmounts.length - 1];
-        // Deteksi qty jika > 1 (misal "2 15000 30,000" atau "15.000 2 30.000" atau "2 x 15.000")
-        let qty = 1;
-        const qtyStartMatch = rawLine.match(/^(\d{1,2})\s*(?:[xX@*]|\s+\d{3,})/);
-        const qtyMiddleMatch = rawLine.match(/^\d[\d.,]*\s+(\d{1,2})\s+\d[\d.,]*$/);
-        if (qtyStartMatch) {
-          qty = parseInt(qtyStartMatch[1], 10) || 1;
-        } else if (qtyMiddleMatch) {
-          qty = parseInt(qtyMiddleMatch[1], 10) || 1;
+      let itemAmount = rowAmounts[rowAmounts.length - 1];
+      let qty = 1;
+
+      // Tangani format "Qty x @HargaSatuan [Subtotal]" (misal "1 x @Rp. 14.000 f°. 14.400 4")
+      const qtyStartMatch = rawLine.match(/^(\d{1,2})\s*[xX@*]/);
+      const atPriceMatch = rawLine.match(/@\s*(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d{4,9})/i);
+      if (qtyStartMatch) {
+        qty = parseInt(qtyStartMatch[1], 10) || 1;
+        if (atPriceMatch) {
+          const unitPrice = parseReceiptCurrencyValue(atPriceMatch[1]);
+          if (unitPrice >= 500) {
+            itemAmount = qty * unitPrice;
+          }
         }
+      }
+
+      // Tangani kasus Momoyo / minimarket di mana kolom Qty dan Subtotal menyatu
+      // Contoh: "16.000 [HargaSatuan]   116.000 [Qty 1 + Subtotal 16.000]"
+      if (!atPriceMatch && rowAmounts.length >= 2) {
+        const first = rowAmounts[0];
+        const last = rowAmounts[rowAmounts.length - 1];
+        if (String(last).endsWith(String(first)) && last > first) {
+          const qtyStr = String(last).slice(0, String(last).length - String(first).length);
+          qty = parseInt(qtyStr, 10) || 1;
+          itemAmount = first;
+        }
+      }
+
+      // Deteksi qty jika ditulis eksplisit terpisah (misal "1 16000 16.000" atau "2 x 15.000")
+      if (qty === 1 && !qtyStartMatch) {
+        const qtyMiddleMatch = rawLine.match(/^\d[\d.,]*\s+(\d{1,2})\s+\d[\d.,]*$/);
+        const qtyIndoMatch = rawLine.match(/^(\d{1,2})\s+\d{3,}/);
+        if (qtyMiddleMatch) {
+          qty = parseInt(qtyMiddleMatch[1], 10) || 1;
+        } else if (qtyIndoMatch) {
+          qty = parseInt(qtyIndoMatch[1], 10) || 1;
+        }
+      }
+
+      if (isValidItemName(pendingItemName)) {
         const finalName =
           qty > 1 && !/^\d+x\s/i.test(pendingItemName)
             ? `${qty}x ${pendingItemName}`
@@ -336,14 +575,25 @@ export function extractReceiptItems(lines, merchant = '') {
           name: finalName,
           amount: itemAmount
         });
-        pendingItemName = '';
-        continue;
       }
+      pendingItemName = '';
+      continue;
     }
 
     // 9. Kasus B: Baris produk lengkap (Nama Produk di kiri + [Qty HargaSatuan] + Subtotal di ujung kanan baris)
-    // Contoh: "SERASOFT SHP DT 170 1 23900 23,900" atau "KAKI3 PENYEGAR 500ML 1 9200 9,200"
-    const endPriceMatch = rawLine.match(
+    // Contoh: "SERASOFT SHP DT 170 1 23900 23,900" atau "BREAD KASUR CKLT 119000 19,000" atau "IR. BREAD KASUR 1 15000 io"
+    let cleanedRow = rawLine;
+    const trailingNoiseMatch = cleanedRow.match(/^(.*?)\s+([a-zA-Z]{1,3}|[^\w\s]{1,4})\s*$/);
+    if (trailingNoiseMatch && /\d{3,}/.test(trailingNoiseMatch[1])) {
+      cleanedRow = trailingNoiseMatch[1].trim();
+    } else {
+      const trailingDigitArtifact = cleanedRow.match(/^(.*?(?:\d{1,3}[.,]\d{3}|\d{4,8}))\s+\d{1,2}\s*$/);
+      if (trailingDigitArtifact) {
+        cleanedRow = trailingDigitArtifact[1].trim();
+      }
+    }
+
+    const endPriceMatch = cleanedRow.match(
       /^(.+?)\s+(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+(?:[.,]00|,-)?|\d{4,8})\s*$/i
     );
 
@@ -352,7 +602,8 @@ export function extractReceiptItems(lines, merchant = '') {
       const rawPriceStr = endPriceMatch[2].trim();
       const itemAmount = parseReceiptCurrencyValue(rawPriceStr);
 
-      if (itemAmount >= 500 && itemAmount % 50 === 0 && !/[\/]/.test(leftText)) {
+      const isInvoiceCodeLine = /\b\d+[\/]\d+\b|(?:\/.*\/)/.test(leftText);
+      if (itemAmount >= 500 && itemAmount % 50 === 0 && !isInvoiceCodeLine) {
         // Cek apakah bagian kiri adalah "2 x 15.000" (format 2 baris minimarket)
         const isQtyMultiplierLine = /^\d+\s*[xX@*]\s*[\d.,]+$/.test(leftText);
         if (isQtyMultiplierLine && pendingItemName) {
@@ -367,10 +618,10 @@ export function extractReceiptItems(lines, merchant = '') {
           continue;
         }
 
-        // Bersihkan ekor "Qty HargaSatuan" pada format 1 baris Indomaret/Alfamart (misal "SERASOFT SHP DT 170 1 23900")
+        // Bersihkan ekor "Qty HargaSatuan" pada format 1 baris Indomaret/Alfamart
         let inlineQty = 1;
         const trailingQtyUnitMatch = leftText.match(
-          /^(.+?)\s+(\d{1,3})\s*(?:[xX@*]\s*)?(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d{3,8})$/i
+          /^(.+?)\s+(\d{1,3})\s*(?:[xX@*]|\s+)(?:rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})+|\d{3,8})$/i
         );
         if (trailingQtyUnitMatch) {
           const candidateName = trailingQtyUnitMatch[1].trim();
@@ -385,14 +636,34 @@ export function extractReceiptItems(lines, merchant = '') {
             leftText = candidateName;
             inlineQty = candidateQty;
           }
+        } else {
+          // Format 1 angka di ekor leftText (misal "119000" saat itemAmount = 19000, atau barcode/unit price saja)
+          const trailingSingleNumMatch = leftText.match(/^(.+?)\s+(\d{1,9})$/);
+          if (trailingSingleNumMatch) {
+            const candidateName = trailingSingleNumMatch[1].trim();
+            const numStr = trailingSingleNumMatch[2];
+            const numVal = parseInt(numStr, 10);
+
+            if (candidateName && /[a-zA-Z]{2,}/.test(candidateName)) {
+              if (numVal === itemAmount) {
+                leftText = candidateName;
+              } else if (numStr.endsWith(String(itemAmount)) && numStr.length > String(itemAmount).length) {
+                const qtyPrefix = numStr.slice(0, numStr.length - String(itemAmount).length);
+                inlineQty = parseInt(qtyPrefix, 10) || 1;
+                leftText = candidateName;
+              } else if (numVal <= 50) {
+                inlineQty = numVal || 1;
+                leftText = candidateName;
+              } else if (numVal >= 500) {
+                leftText = candidateName;
+              }
+            }
+          }
         }
 
-        const cleanedName = leftText
-          .replace(/\s{2,}/g, ' ')
-          .replace(/[:\-.,]+$/, '')
-          .trim();
+        const cleanedName = normalizeItemNameTypography(leftText).replace(/[:\-.,]+$/, '').trim();
 
-        if (cleanedName && /[a-zA-Z]{2,}/.test(cleanedName)) {
+        if (isValidItemName(cleanedName)) {
           const finalName =
             inlineQty > 1 && !/^\d+x\s/i.test(cleanedName)
               ? `${inlineQty}x ${cleanedName}`
@@ -417,15 +688,26 @@ export function extractReceiptItems(lines, merchant = '') {
     }
 
     // 11. Jika sudah ada pendingItemName dan baris ini adalah varian minuman/makanan (misal "Normal Ice/Normal Sugar"),
-    // gabungkan ke pendingItemName agar tidak menimpa nama produk utamanya
+    // gabungkan ke pendingItemName jika teks bersih dari simbol artifact (jangan rusak nama utama jika baris berupa noise)
     if (pendingItemName && variantModifierPattern.test(rawLine) && !/\d{4,}/.test(rawLine)) {
-      pendingItemName = `${pendingItemName} (${rawLine.replace(/\s{2,}/g, ' ')})`;
+      const cleanMod = rawLine.replace(/^[|\\/\s\-_=()]+|[|\\/\s\-_=()]+$/g, '').trim();
+      if (cleanMod && !/[|\\{}[\]~=_^<>`$]/.test(cleanMod) && cleanMod.length <= 30) {
+        pendingItemName = `${pendingItemName} (${cleanMod})`;
+      }
       continue;
     }
 
     // 12. Baris teks nama produk tanpa harga (simpan sementara karena harganya ada di baris bawahnya)
     if (/[a-zA-Z]{3,}/.test(rawLine) && !/[\/:]/.test(rawLine) && i > 1) {
-      pendingItemName = rawLine.replace(/\s{2,}/g, ' ');
+      // Buang ekor kolom noise yang terpisah >= 3 spasi (qty 1–2 digit / artefak 1–2 huruf), misal "7 Straub BI)   1   ul"
+      const withoutColumnNoise = rawLine.replace(
+        /\s{3,}(?:\d{1,2}|[a-zA-Z]{1,2}|[^\w\s]{1,3})(?:\s+(?:\d{1,2}|[a-zA-Z]{1,2}|[^\w\s]{1,3}))*\s*$/,
+        ''
+      );
+      const candidate = normalizeItemNameTypography(withoutColumnNoise);
+      if (isValidItemName(candidate)) {
+        pendingItemName = candidate;
+      }
     }
   }
 
@@ -502,6 +784,43 @@ export function extractReceiptDate(rawText) {
 }
 
 /**
+ * Periksa apakah sebuah baris teks adalah artifact noise / logo rusak OCR
+ * (misal logo Indomaret yang terbaca sebagai |--{sana.~=3 atau so” pPppT To. Ad 4)
+ */
+export function isNoiseOrSymbolGarbage(str) {
+  if (!str || typeof str !== 'string') return true;
+  const s = str.trim();
+  if (s.length < 3) return true;
+
+  // Jika mengandung tanda kutip, simbol artefak garis/kotak, atau karakter kontrol
+  if (/[|\\{}[\]~=_^<>`$©®™#*+”'“"‘’]/.test(s)) {
+    const alphaNumCount = (s.match(/[a-zA-Z0-9]/g) || []).length;
+    if (alphaNumCount / s.length < 0.65) return true;
+  }
+
+  // Jika ada kata dengan case acak aneh (misal pPppT, sAa)
+  if (/\b[a-z]+[A-Z]+[a-z]+\b/.test(s)) return true;
+
+  // Jika berakhir dengan angka terisolasi tanpa konteks jalan (misal "... Ad    4")
+  if (/\s+\d{1,2}$/.test(s) && !/^(?:jl\.?|jln\.?|jalan|gang|blok|no\.?)/i.test(s)) {
+    const words = s.split(/\s+/);
+    if (words.length <= 4 && !/\b(toko|pt|cv|ud|koperasi|minimarket|resto|cafe)\b/i.test(s)) {
+      return true;
+    }
+  }
+
+  // Baris dengan hanya kata-kata sangat pendek acak (misal "lati Ui Fl" atau "tp, :")
+  const words = s.split(/\s+/).filter(Boolean);
+  const longWords = words.filter((w) => w.length >= 3 && /[a-zA-Z]/.test(w));
+  if (longWords.length === 0) return true;
+  if (words.length >= 3 && longWords.length === 1 && words.some((w) => w.length <= 2 && /^[A-Z]/.test(w))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Deteksi Nama Toko / Vendor dari baris-baris awal struk
  */
 export function extractReceiptMerchant(lines) {
@@ -509,22 +828,54 @@ export function extractReceiptMerchant(lines) {
 
   const fullText = lines.join('\n');
 
-  // Deteksi khusus jaringan minimarket yang sering memiliki header PT / alamat gedung di baris paling atas
-  if (/\b(indomaret|indomarco\s+prismatama|klikindomaret)\b/i.test(fullText)) {
-    if (/^indomaret\b/i.test(lines[0])) {
-      return lines[0].trim();
+  // Deteksi khusus jaringan minimarket via keyword langsung ATAU slogan khas Indomaret
+  const isIndomaret =
+    /(?:indomaret|indomarco|klikindomaret|kontak@indomaret|@indomaret)/i.test(fullText) ||
+    (/\b(belanja\s+lebih\s+mu[od]ah|layanan\s+konsumen|gratis\s+ongkir|grais\s+on)\b/i.test(fullText) &&
+      /\b(indomaret|indomarco|sidayu|gresik|alfamart)\b/i.test(fullText));
+
+  if (isIndomaret) {
+    // 1. Cek baris awal jika ada teks Indomaret eksplisit
+    for (let i = 0; i < Math.min(lines.length, 3); i++) {
+      if (/^indomaret\b/i.test(lines[i])) {
+        return lines[i].trim();
+      }
     }
-    // Cari nama gerai/cabang tepat setelah baris NPWP (contoh: "PAHLAWAN SIDAYU" atau "SIDAYU")
-    for (let i = 0; i < Math.min(lines.length, 10); i++) {
-      if (/\bnpwp\b/i.test(lines[i]) && i + 1 < lines.length) {
-        const branchCandidate = lines[i + 1]
-          .replace(/^npwp[\d.\-\s]+/i, '')
-          .trim();
+    // 2. Cari nama gerai/cabang (misal "SIDAYU, KAB GRESIK" atau setelah NPWP/WP atau sebelum baris JL.)
+    for (let i = 0; i < Math.min(lines.length, 12); i++) {
+      const line = lines[i].trim();
+
+      // Cek pola nama cabang sebelum ", KAB / KOTA" (misal "se SIDAYU, KAB GRESIK")
+      const kabMatch = line.match(/\b([A-Za-z]{3,18})\s*,\s*(?:kab\.?|kota)\b/i);
+      if (kabMatch && !/^(jawa|timur|barat|tengah|dki|daerah)$/i.test(kabMatch[1])) {
+        return `Indomaret ${kabMatch[1].toUpperCase()}`;
+      }
+
+      if (/\b(?:npwp|wp)\b/i.test(line)) {
+        for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+          const branchCandidate = lines[j]
+            .replace(/^(?:npwp|wp)[\d.\-\s]+/i, '')
+            .trim();
+          if (
+            branchCandidate &&
+            !isNoiseOrSymbolGarbage(branchCandidate) &&
+            branchCandidate.length >= 3 &&
+            !/^(?:jl\.?|jln\.?|jalan|[0-9\s]*ul\.|kec\.|kab\.|kota|---|\*\*\*)/i.test(branchCandidate)
+          ) {
+            return `Indomaret ${branchCandidate}`;
+          }
+        }
+      }
+
+      // Baris nama cabang sebelum alamat jalan (contoh: "SIDAYU" tepat sebelum "JL. PAHLAWAN" atau "UL. PAKLAUAN")
+      if (i + 1 < lines.length && /^(?:jl\.?|jln\.?|jalan|[0-9\s]*ul\.)\s+/i.test(lines[i + 1].trim())) {
         if (
-          branchCandidate.length >= 3 &&
-          !/^(jl\.|jln\.|jalan|kec\.|kab\.|kota|---)/i.test(branchCandidate)
+          !isNoiseOrSymbolGarbage(line) &&
+          line.length >= 3 &&
+          !/\d/.test(line) &&
+          !/^(?:cv|pt|ud)\b/i.test(line)
         ) {
-          return `Indomaret ${branchCandidate}`;
+          return `Indomaret ${line}`;
         }
       }
     }
@@ -532,21 +883,24 @@ export function extractReceiptMerchant(lines) {
   }
 
   if (/\b(alfamart|sumber\s+alfaria\s+trijaya|alfagift)\b/i.test(fullText)) {
-    if (/^alfamart\b/i.test(lines[0])) {
-      return lines[0].trim();
+    for (let i = 0; i < Math.min(lines.length, 3); i++) {
+      if (/^alfamart\b/i.test(lines[i])) {
+        return lines[i].trim();
+      }
     }
     return 'Alfamart';
   }
 
   const skipHeaderPattern =
-    /^(struk|nota|kwitansi|bukti|faktur|invoice|receipt|copy|selamat\s+datang|terima\s+kasih|thank\s+you|npwp|telp|tlp|hp|wa|fax|jl\.|jln\.|jalan|kec\.|kab\.|kota|tanggal|tgl|kasir|no\.|nomor|shift|---|\*\*\*|===)/i;
+    /^(struk|nota|kwitansi|bukti|faktur|invoice|receipt|copy|selamat\s+datang|terima\s+kasih|thank\s+you|npwp|wp\b|telp|tlp|hp|wa|fax|jl\.?|jln\.?|jalan|[0-9\s]*ul\.|kec\.|kab\.|kota|tanggal|tgl|kasir|no\.|nomor|shift|---|\*\*\*|===)/i;
 
-  for (let i = 0; i < Math.min(lines.length, 6); i++) {
+  for (let i = 0; i < Math.min(lines.length, 8); i++) {
     const clean = lines[i]
       .replace(/^[*=\-#\s]+|[*=\-#\s]+$/g, '')
       .trim();
 
     if (clean.length < 3) continue;
+    if (isNoiseOrSymbolGarbage(clean)) continue;
     if (skipHeaderPattern.test(clean)) continue;
     if (!/[a-zA-Z]{2,}/.test(clean)) continue;
     if (/\b\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}\b/.test(clean)) continue;
@@ -559,7 +913,8 @@ export function extractReceiptMerchant(lines) {
       if (
         nextClean.length > clean.length &&
         nextClean.toLowerCase().startsWith(clean.toLowerCase()) &&
-        !skipHeaderPattern.test(nextClean)
+        !skipHeaderPattern.test(nextClean) &&
+        !isNoiseOrSymbolGarbage(nextClean)
       ) {
         return nextClean;
       }
@@ -568,7 +923,14 @@ export function extractReceiptMerchant(lines) {
     return clean;
   }
 
-  return lines[0]?.trim() || '';
+  for (let i = 0; i < Math.min(lines.length, 4); i++) {
+    const candidate = lines[i]?.trim() || '';
+    if (candidate && !isNoiseOrSymbolGarbage(candidate)) {
+      return candidate;
+    }
+  }
+
+  return '';
 }
 
 /**
@@ -601,7 +963,14 @@ export function extractReceiptNumber(rawText) {
  */
 export function parseReceiptText(
   rawText,
-  { activeWorkspace = 'personal', allAccounts = [], allCategories = [], allTransactions = [] } = {}
+  {
+    activeWorkspace = 'personal',
+    allAccounts = [],
+    allCategories = [],
+    allTransactions = [],
+    itemHistory = [],
+    itemAliases = null
+  } = {}
 ) {
   const cleanRaw = (rawText || '').trim();
   const lines = cleanRaw
@@ -612,7 +981,7 @@ export function parseReceiptText(
   const date = extractReceiptDate(cleanRaw);
   const merchant = extractReceiptMerchant(lines);
   const no_bukti = extractReceiptNumber(cleanRaw);
-  const items = extractReceiptItems(lines, merchant);
+  const items = matchItemsWithHistory(extractReceiptItems(lines, merchant), itemHistory, itemAliases);
   const amount = extractReceiptTotal(lines, items);
 
   const lower = cleanRaw.toLowerCase();
@@ -764,6 +1133,7 @@ function reconstructLinesFromDetectedBlocks(detectedBlocks) {
 
 /**
  * Hitung skor kelengkapan hasil ekstraksi struk (untuk memilih hasil terbaik antara kanvas kontras vs asli)
+ * Memberi bobot tinggi pada rincian item belanja & nama toko yang bersih dari artefak simbol.
  */
 function scoreExtractedReceiptText(rawText) {
   if (!rawText || !rawText.trim()) return 0;
@@ -773,7 +1143,22 @@ function scoreExtractedReceiptText(rawText) {
     .filter(Boolean);
   const items = extractReceiptItems(lines);
   const total = extractReceiptTotal(lines, items);
-  return (total > 0 ? 100 : 0) + items.length * 25 + Math.min(lines.length, 30);
+  const merchant = extractReceiptMerchant(lines);
+  const isMerchantClean = merchant && !isNoiseOrSymbolGarbage(merchant);
+
+  let score = 0;
+  if (total > 0) score += 80;
+  score += items.length * 40;
+  if (isMerchantClean) score += 35;
+  score += Math.min(lines.length, 25);
+
+  // Bonus jika total belanja cocok dengan akumulasi seluruh item (struk terbaca utuh & konsisten)
+  const itemsSum = items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0);
+  if (items.length >= 2 && itemsSum > 0 && itemsSum === total) {
+    score += 60;
+  }
+
+  return score;
 }
 
 /**
@@ -821,8 +1206,8 @@ export async function extractTextFromReceiptImage(
         }
       }
 
-      // Jika TextDetector sudah berhasil mendapatkan nominal total yang valid, langsung kembalikan
-      if (bestScore >= 100) {
+      // Jika TextDetector sudah berhasil mendapatkan nominal total dan rincian item/toko yang valid
+      if (bestScore >= 120) {
         return { text: bestText, engine: bestEngine };
       }
     } catch {
@@ -855,8 +1240,9 @@ export async function extractTextFromReceiptImage(
       let candidateText = (ret?.data?.text || '').trim();
       let candidateScore = scoreExtractedReceiptText(candidateText);
 
-      // Jika kanvas kontras belum mendapatkan nominal total dan ada kanvas asli, uji kanvas asli
-      if (candidateScore < 100 && secondaryCanvas) {
+      // Uji kanvas sekunder HANYA jika kanvas primer belum optimal (skor < 80)
+      if (secondaryCanvas && candidateScore < 80) {
+        onProgress('Menguji kanvas alternatif untuk hasil terbaik...');
         const retRaw = await worker.recognize(secondaryCanvas);
         const rawText = (retRaw?.data?.text || '').trim();
         const rawScore = scoreExtractedReceiptText(rawText);
@@ -877,8 +1263,8 @@ export async function extractTextFromReceiptImage(
         return { text: ocrText.trim(), engine: 'Tesseract WASM OCR' };
       }
     }
-  } catch {
-    // Abaikan jika benar-benar belum ter-cache saat offline pertama kali
+  } catch (err) {
+    console.warn('OCR error:', err);
   }
 
   if (bestText) {

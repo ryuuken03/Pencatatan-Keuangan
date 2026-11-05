@@ -1,6 +1,7 @@
 import Dexie from 'dexie';
 import { uuidv7, deterministicUuidV7 } from './utils.js';
 import { blobToSerializable, serializableToBlob } from './utils/cryptoBackup.js';
+import { normalizeForMatch } from './utils/fuzzyMatcher.js';
 
 export const db = new Dexie('AplikasiKeuanganDB');
 
@@ -57,6 +58,18 @@ db.version(2)
       await trans.table('transaction_items').bulkPut(itemsToInsert);
     }
   });
+
+// Versi 3: Tabel `item_aliases` (Kamus Koreksi OCR Typo -> Nama Resmi, Kapasitas Terbatas)
+db.version(3).stores({
+  workspaces: 'id, name, currency',
+  accounts: 'id, workspace_id, name, type, updated_at, deleted_at, sync_status',
+  categories: 'id, workspace_id, name, type, updated_at, deleted_at, sync_status',
+  transactions: 'id, workspace_id, account_id, to_account_id, category_id, type, date, created_at, updated_at, deleted_at, sync_status',
+  transaction_items: 'id, transaction_id, workspace_id, name, sort_order, updated_at, deleted_at, sync_status',
+  item_aliases: 'id, ocr_key, canonical_name, merchant, hit_count, workspace_id, updated_at, deleted_at, sync_status'
+});
+
+export const MAX_ITEM_ALIASES = 2000;
 
 export const KOPDES_UNITS = [
   'Unit Simpan Pinjam (USP)',
@@ -689,14 +702,103 @@ export async function softDeleteCategory(id) {
 }
 
 /**
+ * Rekam atau perbarui alias typo OCR -> Nama Barang Resmi (Kamus Mandiri OCR)
+ * Batas maksimal MAX_ITEM_ALIASES terjaga tanpa auto-delete berbasis umur (hanya evict LFU/LRU jika kapasitas penuh).
+ * @param {Array<{ ocrKey: string, canonicalName: string, merchant?: string, workspaceId?: string }>} rawAliases
+ */
+export async function recordItemAliases(rawAliases = []) {
+  if (!Array.isArray(rawAliases) || rawAliases.length === 0) return 0;
+  const now = new Date().toISOString();
+  let recordedCount = 0;
+
+  await db.transaction('rw', db.item_aliases, async () => {
+    const existingList = await db.item_aliases.filter((a) => !a.deleted_at).toArray();
+    const map = new Map(existingList.map((a) => [a.ocr_key, a]));
+
+    for (const raw of rawAliases) {
+      const ocrRaw = String(raw.ocrKey || raw.rawOcrText || '').trim();
+      const canonical = String(raw.canonicalName || '').trim();
+      const merchant = String(raw.merchant || '').trim();
+      const wsId = String(raw.workspaceId || 'personal');
+
+      if (!ocrRaw || !canonical) continue;
+      const ocrKey = normalizeForMatch(ocrRaw).replace(/ /g, '');
+      const canonicalKey = normalizeForMatch(canonical).replace(/ /g, '');
+
+      // Abaikan jika terlalu pendek atau sama persis
+      if (ocrKey.length < 3 || ocrKey === canonicalKey) continue;
+
+      const existing = map.get(ocrKey);
+      if (existing) {
+        existing.canonical_name = canonical;
+        if (merchant) existing.merchant = merchant;
+        existing.hit_count = (Number(existing.hit_count) || 1) + 1;
+        existing.workspace_id = wsId || existing.workspace_id || 'personal';
+        existing.updated_at = now;
+        existing.deleted_at = null;
+        existing.sync_status = 'pending';
+        recordedCount++;
+      } else {
+        const newRecord = {
+          id: uuidv7(),
+          ocr_key: ocrKey,
+          canonical_name: canonical,
+          merchant,
+          hit_count: 1,
+          workspace_id: wsId,
+          created_at: now,
+          updated_at: now,
+          deleted_at: null,
+          sync_status: 'pending'
+        };
+        map.set(ocrKey, newRecord);
+        recordedCount++;
+      }
+    }
+
+    const allEntries = Array.from(map.values());
+    const toDeleteIds = [];
+
+    if (allEntries.length > MAX_ITEM_ALIASES) {
+      allEntries.sort((a, b) => {
+        if ((a.hit_count || 1) !== (b.hit_count || 1)) {
+          return (a.hit_count || 1) - (b.hit_count || 1);
+        }
+        return String(a.updated_at || '').localeCompare(String(b.updated_at || ''));
+      });
+      const overflowCount = allEntries.length - MAX_ITEM_ALIASES;
+      for (let i = 0; i < overflowCount; i++) {
+        toDeleteIds.push(allEntries[i].id);
+      }
+      allEntries.splice(0, overflowCount);
+    }
+
+    if (toDeleteIds.length > 0) {
+      await db.item_aliases.bulkDelete(toDeleteIds);
+    }
+    await db.item_aliases.bulkPut(allEntries);
+  });
+
+  return recordedCount;
+}
+
+/**
+ * Ambil seluruh kamus alias aktif dari Dexie
+ */
+export async function loadItemAliases() {
+  return db.item_aliases.filter((a) => !a.deleted_at).toArray();
+}
+
+/**
  * Statistik Database & Storage (Modul 1C)
  */
 export async function getDatabaseStats() {
-  const [accounts, categories, transactions, txItems] = await Promise.all([
+  const [accounts, categories, transactions, txItems, aliases] = await Promise.all([
     db.accounts.toArray(),
     db.categories.toArray(),
     db.transactions.toArray(),
-    db.transaction_items.toArray()
+    db.transaction_items.toArray(),
+    db.item_aliases.toArray()
   ]);
 
   let attachmentCount = 0;
@@ -706,6 +808,7 @@ export async function getDatabaseStats() {
   for (const a of accounts) if (a.deleted_at) softDeletedCount++;
   for (const c of categories) if (c.deleted_at) softDeletedCount++;
   for (const it of txItems) if (it.deleted_at) softDeletedCount++;
+  for (const al of aliases) if (al.deleted_at) softDeletedCount++;
 
   for (const tx of transactions) {
     if (tx.deleted_at) {
@@ -721,6 +824,7 @@ export async function getDatabaseStats() {
     activeCategories: categories.filter((c) => !c.deleted_at).length,
     activeTransactions: transactions.filter((t) => !t.deleted_at).length,
     activeItems: txItems.filter((it) => !it.deleted_at).length,
+    activeAliases: aliases.filter((al) => !al.deleted_at).length,
     attachmentCount,
     attachmentKB: Math.round(attachmentBytes / 1024),
     softDeletedCount
@@ -738,18 +842,21 @@ export async function compactDatabase() {
     db.categories,
     db.transactions,
     db.transaction_items,
+    db.item_aliases,
     async () => {
       const delAccounts = await db.accounts.filter((a) => Boolean(a.deleted_at)).primaryKeys();
       const delCategories = await db.categories.filter((c) => Boolean(c.deleted_at)).primaryKeys();
       const delTxs = await db.transactions.filter((t) => Boolean(t.deleted_at)).primaryKeys();
       const delItems = await db.transaction_items.filter((it) => Boolean(it.deleted_at)).primaryKeys();
+      const delAliases = await db.item_aliases.filter((al) => Boolean(al.deleted_at)).primaryKeys();
 
       if (delAccounts.length) await db.accounts.bulkDelete(delAccounts);
       if (delCategories.length) await db.categories.bulkDelete(delCategories);
       if (delTxs.length) await db.transactions.bulkDelete(delTxs);
       if (delItems.length) await db.transaction_items.bulkDelete(delItems);
+      if (delAliases.length) await db.item_aliases.bulkDelete(delAliases);
 
-      purged = delAccounts.length + delCategories.length + delTxs.length + delItems.length;
+      purged = delAccounts.length + delCategories.length + delTxs.length + delItems.length + delAliases.length;
     }
   );
   return purged;
@@ -759,12 +866,13 @@ export async function compactDatabase() {
  * Ekspor seluruh isi database ke objek JSON-ready (termasuk serialisasi Blob struk WebP)
  */
 export async function exportDatabasePayload({ includeAttachments = true } = {}) {
-  const [workspaces, accounts, categories, transactions, transaction_items] = await Promise.all([
+  const [workspaces, accounts, categories, transactions, transaction_items, item_aliases] = await Promise.all([
     db.workspaces.toArray(),
     db.accounts.toArray(),
     db.categories.toArray(),
     db.transactions.toArray(),
-    db.transaction_items.toArray()
+    db.transaction_items.toArray(),
+    db.item_aliases.toArray()
   ]);
 
   const serializedTransactions = [];
@@ -780,14 +888,15 @@ export async function exportDatabasePayload({ includeAttachments = true } = {}) 
 
   return {
     app: 'buku-kas-multi-workspace',
-    schema_version: 2,
+    schema_version: 3,
     exported_at: new Date().toISOString(),
     data: {
       workspaces,
       accounts,
       categories,
       transactions: serializedTransactions,
-      transaction_items
+      transaction_items,
+      item_aliases
     }
   };
 }
@@ -808,6 +917,7 @@ export async function restoreDatabasePayload(payload, { mode = 'merge' } = {}) {
   const categories = Array.isArray(data.categories) ? data.categories : [];
   const rawTransactions = Array.isArray(data.transactions) ? data.transactions : [];
   const transactionItems = Array.isArray(data.transaction_items) ? data.transaction_items : [];
+  const itemAliases = Array.isArray(data.item_aliases) ? data.item_aliases : [];
 
   const hydratedTransactions = rawTransactions.map((tx) => ({
     ...tx,
@@ -822,6 +932,7 @@ export async function restoreDatabasePayload(payload, { mode = 'merge' } = {}) {
     db.categories,
     db.transactions,
     db.transaction_items,
+    db.item_aliases,
     async () => {
       if (mode === 'replace') {
         await Promise.all([
@@ -829,7 +940,8 @@ export async function restoreDatabasePayload(payload, { mode = 'merge' } = {}) {
           db.accounts.clear(),
           db.categories.clear(),
           db.transactions.clear(),
-          db.transaction_items.clear()
+          db.transaction_items.clear(),
+          db.item_aliases.clear()
         ]);
       }
 
@@ -838,6 +950,7 @@ export async function restoreDatabasePayload(payload, { mode = 'merge' } = {}) {
       if (categories.length > 0) await db.categories.bulkPut(categories);
       if (hydratedTransactions.length > 0) await db.transactions.bulkPut(hydratedTransactions);
       if (transactionItems.length > 0) await db.transaction_items.bulkPut(transactionItems);
+      if (itemAliases.length > 0) await db.item_aliases.bulkPut(itemAliases);
     }
   );
 
@@ -848,7 +961,8 @@ export async function restoreDatabasePayload(payload, { mode = 'merge' } = {}) {
     accounts: accounts.length,
     categories: categories.length,
     transactions: hydratedTransactions.length,
-    items: transactionItems.length
+    items: transactionItems.length,
+    aliases: itemAliases.length
   };
 }
 

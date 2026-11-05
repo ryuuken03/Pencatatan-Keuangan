@@ -108,12 +108,13 @@ class SyncEngine {
   }
 
   async _countPending() {
-    const [pendingAccounts, pendingCategories, pendingTransactions, pendingItems] =
+    const [pendingAccounts, pendingCategories, pendingTransactions, pendingItems, pendingAliases] =
       await Promise.all([
         db.accounts.where('sync_status').equals('pending').count(),
         db.categories.where('sync_status').equals('pending').count(),
         db.transactions.where('sync_status').equals('pending').count(),
-        db.transaction_items.where('sync_status').equals('pending').count()
+        db.transaction_items.where('sync_status').equals('pending').count(),
+        db.item_aliases.where('sync_status').equals('pending').count()
       ]);
 
     return {
@@ -121,8 +122,9 @@ class SyncEngine {
       pendingCategories,
       pendingTransactions,
       pendingItems,
+      pendingAliases,
       totalPending:
-        pendingAccounts + pendingCategories + pendingTransactions + pendingItems
+        pendingAccounts + pendingCategories + pendingTransactions + pendingItems + pendingAliases
     };
   }
 
@@ -466,6 +468,26 @@ class SyncEngine {
       totalPushed += pendingItems.length;
     }
 
+    // Kamus Koreksi OCR (item_aliases)
+    const pendingAliases = await db.item_aliases.where('sync_status').equals('pending').toArray();
+    if (pendingAliases.length > 0) {
+      const pushedTimestamps = pendingAliases.map((al) => resolvePushTimestamp(al, syncStartTime));
+      const payload = pendingAliases.map((al, i) => ({
+        id: al.id,
+        ocr_key: al.ocr_key,
+        canonical_name: al.canonical_name,
+        merchant: al.merchant || '',
+        hit_count: Number(al.hit_count) || 1,
+        workspace_id: al.workspace_id || 'personal',
+        created_at: al.created_at || syncStartTime,
+        updated_at: pushedTimestamps[i],
+        deleted_at: al.deleted_at || null
+      }));
+      await supabaseAdapter.pushBatch('item_aliases', payload, userId);
+      await this._markSynced(db.item_aliases, pendingAliases, pushedTimestamps);
+      totalPushed += pendingAliases.length;
+    }
+
     return totalPushed;
   }
 
@@ -566,6 +588,19 @@ class SyncEngine {
       name: r.name,
       amount: Math.round(Number(r.amount) || 0),
       sort_order: Number(r.sort_order) || 0,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      deleted_at: r.deleted_at || null
+    }));
+
+    const remoteAliases = await supabaseAdapter.pullChanges('item_aliases', sinceTimestamp, userId);
+    totalPulled += await this._applyRemote(db.item_aliases, remoteAliases, (r) => ({
+      id: r.id,
+      ocr_key: r.ocr_key,
+      canonical_name: r.canonical_name,
+      merchant: r.merchant || '',
+      hit_count: Number(r.hit_count) || 1,
+      workspace_id: r.workspace_id || 'personal',
       created_at: r.created_at,
       updated_at: r.updated_at,
       deleted_at: r.deleted_at || null

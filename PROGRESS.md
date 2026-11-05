@@ -60,6 +60,7 @@ Gunakan prompt di bawah ini satu per satu pada setiap sesi pengerjaan.
 - [x] Utilitas kompresi gambar (`src/lib/utils/imageCompressor.js`) menggunakan `<canvas>` ke format **WebP < 80 KB** (maks 1000px) + mode *High-Contrast* + toggle *"Jangan simpan foto"*.
 - [x] Ekstraksi teks struk (OCR) & Regex Parser (`src/lib/parsers/receiptParser.js`) untuk membedakan metadata nota (`No. Nota`, `Kasir`, `Waktu`) vs daftar produk, mendeteksi Nominal Total, Tanggal, Nama Toko, serta tampilan adaptif **List Produk (Checklist Interaktif)** vs **Single Total** di `ReceiptScannerModal.svelte` $\rightarrow$ langsung mengisi `TransactionForm`.
 - [x] Indikator & Preview lampiran foto struk WebP beserta tabel rincian produk (`transaction_items`) pada daftar & detail transaksi (`ReceiptPreviewModal.svelte`).
+- [x] Self-Learning Receipt Scanner (`docs/SMART_RECEIPT_LEARNING_DESIGN.md`): seluruh regex nama produk/merek dihapus dari `receiptParser.js` (parser murni heuristik struktural + `normalizeItemNameTypography`). Dilengkapi tabel Dexie v3 `item_aliases` (kapasitas tetap maks 2000 alias tanpa auto-delete berbasis umur) + fuzzy Sørensen–Dice native (`src/lib/utils/fuzzyMatcher.js`), pencegahan memory leak (cleanup index saat modal tutup), serta antarmuka edit langsung (nama & harga produk, tanggal, dompet, kategori) dan tombol simpan transaksi instan di `ReceiptScannerModal.svelte`.
 
 ---
 

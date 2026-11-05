@@ -406,6 +406,7 @@
       {allCategories}
       {allTransactions}
       onApply={handleApplySmartInput}
+      onSave={handleSaveTransaction}
       onClose={() => (isReceiptModalOpen = false)}
     />
 

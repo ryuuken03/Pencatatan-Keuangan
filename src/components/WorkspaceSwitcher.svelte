@@ -24,7 +24,7 @@
       isSyncing: false,
       totalPending: 0,
       isConfigured: false,
-      isAuthenticated: false
+      isAuthenticated: false,
     },
     isPinEnabled = false,
   } = $props();
@@ -151,27 +151,47 @@
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-slate-50 text-slate-500 border-slate-200'}"
             title={syncState.isSyncing
-              ? 'Sedang Sinkronisasi...'
+              ? "Sedang Sinkronisasi..."
               : syncState.totalPending > 0
                 ? `${syncState.totalPending} data pending sync`
                 : syncState.isAuthenticated
-                  ? 'Cloud Sync Aktif'
-                  : 'Pengaturan Cloud Sync'}
+                  ? "Cloud Sync Aktif"
+                  : "Pengaturan Cloud Sync"}
             aria-label="Status Cloud Sync"
           >
             {#if syncState.isSyncing}
-              <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <svg
+                class="w-3.5 h-3.5 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
                 <path d="M21 12a9 9 0 1 1-6.219-8.56" />
               </svg>
             {:else}
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" stroke-linecap="round" stroke-linejoin="round" />
+              <svg
+                class="w-3.5 h-3.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
+                <path
+                  d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
             {/if}
             {#if syncState.totalPending > 0}
-              <span class="w-2 h-2 rounded-full bg-amber-500 absolute -top-0.5 -right-0.5"></span>
+              <span
+                class="w-2 h-2 rounded-full bg-amber-500 absolute -top-0.5 -right-0.5"
+              ></span>
             {:else if syncState.isAuthenticated}
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 absolute -top-0.5 -right-0.5"></span>
+              <span
+                class="w-1.5 h-1.5 rounded-full bg-emerald-500 absolute -top-0.5 -right-0.5"
+              ></span>
             {/if}
           </button>
         {/if}
@@ -246,18 +266,42 @@
             title="Pengaturan Sinkronisasi"
           >
             {#if syncState.isSyncing}
-              <svg class="w-4 h-4 animate-spin text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <svg
+                class="w-4 h-4 animate-spin text-indigo-600"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
                 <path d="M21 12a9 9 0 1 1-6.219-8.56" />
               </svg>
               <span class="hidden xl:inline">Syncing...</span>
             {:else}
-              <svg class="w-4 h-4 {syncState.totalPending > 0 ? 'text-amber-600' : syncState.isAuthenticated ? 'text-emerald-600' : 'text-slate-500'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" stroke-linecap="round" stroke-linejoin="round" />
+              <svg
+                class="w-4 h-4 {syncState.totalPending > 0
+                  ? 'text-amber-600'
+                  : syncState.isAuthenticated
+                    ? 'text-emerald-600'
+                    : 'text-slate-500'}"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
               </svg>
               {#if syncState.totalPending > 0}
-                <span class="tabular-nums font-bold text-amber-700">{syncState.totalPending} Pending</span>
+                <span class="tabular-nums font-bold text-amber-700"
+                  >{syncState.totalPending} Pending</span
+                >
               {:else if syncState.isAuthenticated}
-                <span class="hidden xl:inline font-bold text-emerald-700">Tersinkron</span>
+                <span class="hidden xl:inline font-bold text-emerald-700"
+                  >Tersinkron</span
+                >
                 <span class="xl:hidden">Sync</span>
               {:else}
                 <span class="hidden xl:inline">Sync Cloud</span>
@@ -367,7 +411,7 @@
           type="button"
           onclick={onOpenReceiptModal}
           class="hidden md:inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 hover:border-slate-300 shadow-2xs transition-colors cursor-pointer"
-          title="Scan Foto Struk / Nota (WebP + OCR)"
+          title="Scan Foto Struk / Nota"
         >
           <svg
             class="w-4 h-4 text-emerald-700"

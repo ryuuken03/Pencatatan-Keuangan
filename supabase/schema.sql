@@ -89,6 +89,21 @@ CREATE TABLE IF NOT EXISTS public.transaction_items (
     sync_status TEXT NOT NULL DEFAULT 'synced'
 );
 
+-- F. TABEL item_aliases (Kamus Typo OCR -> Nama Resmi, Kapasitas Terbatas)
+CREATE TABLE IF NOT EXISTS public.item_aliases (
+    id TEXT NOT NULL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    ocr_key TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    merchant TEXT NOT NULL DEFAULT '',
+    hit_count INT NOT NULL DEFAULT 1,
+    workspace_id TEXT NOT NULL DEFAULT 'personal',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    sync_status TEXT NOT NULL DEFAULT 'synced'
+);
+
 -- ==============================================================================
 -- 3. INDEX UNTUK PERFORMA DELTA SYNC (HEMAT BATERAI & KUOTA)
 -- ==============================================================================
@@ -104,6 +119,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_user_updated ON public.transactions 
 CREATE INDEX IF NOT EXISTS idx_transactions_workspace ON public.transactions (user_id, workspace_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_tx_items_user_updated ON public.transaction_items (user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tx_items_transaction_id ON public.transaction_items (transaction_id);
+CREATE INDEX IF NOT EXISTS idx_item_aliases_user_updated ON public.item_aliases (user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_item_aliases_ocr_key ON public.item_aliases (user_id, ocr_key);
 
 -- ==============================================================================
 -- 4. ROW LEVEL SECURITY (RLS) POLICIES
@@ -153,6 +170,14 @@ CREATE POLICY "transactions_user_policy"
 DROP POLICY IF EXISTS "transaction_items_user_policy" ON public.transaction_items;
 CREATE POLICY "transaction_items_user_policy"
     ON public.transaction_items
+    FOR ALL
+    USING (auth.uid() = user_id)
+    WITH CHECK (auth.uid() = user_id);
+
+-- Policy Item Aliases
+DROP POLICY IF EXISTS "item_aliases_user_policy" ON public.item_aliases;
+CREATE POLICY "item_aliases_user_policy"
+    ON public.item_aliases
     FOR ALL
     USING (auth.uid() = user_id)
     WITH CHECK (auth.uid() = user_id);
