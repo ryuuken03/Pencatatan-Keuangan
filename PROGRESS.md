@@ -1,7 +1,7 @@
 # Tracker Progress & Panduan Prompt Hemat Token
 > **Acuan Utama:** [PRD.md](./PRD.md) & [GEMINI.md](./GEMINI.md)  
 > **Status Saat Ini:** `90% (Fase 1 & Fase 2 Selesai 100% — Siap Eksekusi Fase 3)`  
-> **Update Terakhir:** 3 November 2026
+> **Update Terakhir:** 5 November 2026
 
 ---
 
@@ -27,6 +27,12 @@ Proyek ini telah dilengkapi dengan **Workspace Rules Otomatis** di [`GEMINI.md`]
 - [x] **Modul 1B:** Smart Input (Voice-to-Text Parser Bahasa Indonesia & Kamera Kompresi WebP + OCR Struk Mandiri Self-Learning Typo Bigram Matcher & Editor Instan)
 - [x] **Modul 1C:** Laporan Rekapitulasi, Export & Import Excel (`.xlsx`), Backup JSON Terenkripsi (WebCrypto `AES-GCM 256-bit`), PIN Lock 6 Digit, Mobile Bottom Navbar & PWA Offline Manifest
 - [x] **Fase 2:** Integrasi Sinkronisasi Database Online (Supabase Delta Sync & RLS)
+- [ ] **Fase 2.5 (Optimasi Kinerja & DX Maintainability):**
+  - [x] P1: Code-Splitting, Lazy-Loading Modals & Bundle Optimization (Eliminasi Monolith > 500 kB)
+  - [ ] P2: Modularisasi Komponen Raksasa (`TransactionForm`, `TransactionList`, `db.js`)
+  - [ ] P3: Setup Vitest & Unit Test Logika Akuntansi & Parser Inti
+  - [ ] P4: Type Definition (`src/types.d.ts`) & Developer Autocomplete (DX)
+  - [ ] P5: Optimasi Memori Blob Gambar di IndexedDB & Adaptive Sync Polling
 - [ ] **Fase 3:** Backend API Go (Golang) untuk Home Server (Intel Celeron, RAM 4GB, SSD 128GB)
 
 ---
@@ -96,6 +102,115 @@ Sekarang kerjakan FASE 2 (Supabase Sync):
 2. Buat Sync Engine & SupabaseAdapter dengan metode Delta Sync (`sync_status = 'pending'` dan `updated_at`) tanpa merusak fungsi offline-first.
 3. Tambahkan menu Pengaturan Sinkronisasi & indikator status sync di header/pengaturan.
 4. Update checklist Fase 2 di @PROGRESS.md.
+```
+
+---
+
+### FASE 2.5: Optimasi Kinerja, Refactoring Arsitektur & DX (Maintainability)
+
+---
+
+#### PRIORITAS 1 (P1): Code-Splitting & Bundle Optimization (< 500 kB)
+**Target Sesi Ini:** Menghilangkan warning chunk Vite (> 500 kB), menerapkan lazy-loading modal berat (`ReportExportModal`, `ReceiptScannerModal`, `SecurityBackupModal`, `SyncSettingsModal`, `VoiceInputModal`) dan chunking terpisah untuk `xlsxEngine.js` serta `receiptParser.js`.
+
+##### Checklist P1:
+- [x] Konfigurasi `manualChunks` di `vite.config.js` untuk memecah vendor dan modul berat (`xlsxEngine.js`, `receiptParser.js`, `cryptoBackup.js`, `vendor-dexie`).
+- [x] Implementasi dynamic import / lazy load pada modal-modal non-kritis di `src/App.svelte` (hanya dimuat saat tombol modal ditekan pengguna: `ReportExportModal`, `ReceiptScannerModal`, `SecurityBackupModal`, `SyncSettingsModal`, `VoiceInputModal`).
+- [x] Verifikasi `npm run build` sukses tanpa warning chunk > 500 kB dan periksa bundle size reduction (Entry chunk turun dari 508.07 kB ke 202.76 kB, reduksi 60%, PWA precache 21 entri 100% offline).
+
+##### 📋 Prompt Siap Pakai — P1 (Chat Baru):
+```text
+Acuan kita adalah @PRD.md, @GEMINI.md, dan @PROGRESS.md.
+Kerjakan FASE 2.5 PRIORITAS 1 (P1: Code-Splitting & Bundle Optimization):
+1. Konfigurasikan `manualChunks` pada `vite.config.js` dan terapkan lazy-loading (dynamic import) di `src/App.svelte` untuk modal berat (`ReportExportModal`, `ReceiptScannerModal`, `SecurityBackupModal`, `SyncSettingsModal`, `VoiceInputModal`).
+2. Pastikan `xlsxEngine.js` dan `receiptParser.js` tidak ikut terbundle di entry chunk utama `index.js`.
+3. Jalankan `npm run build` dan pastikan warning chunk > 500 kB hilang serta PWA tetap bekerja normal 100% offline.
+4. Update checklist P1 di @PROGRESS.md.
+```
+
+---
+
+#### PRIORITAS 2 (P2): Modularisasi Komponen Raksasa & Dekomposisi File
+**Target Sesi Ini:** Memecah komponen raksasa (`TransactionForm.svelte` 1.370 baris & `TransactionList.svelte` 1.332 baris) dan `src/lib/db.js` (1.185 baris) menjadi modul-modul kecil yang kohesif agar mudah dipelihara dan dipahami developer lain.
+
+##### Checklist P2:
+- [x] Dekomposisi `TransactionForm.svelte` ke sub-komponen: `CalculatorKeypad.svelte`, `TransactionItemsTable.svelte`, dan `ReceiptAttachmentField.svelte`.
+- [x] Dekomposisi `TransactionList.svelte` ke sub-komponen: `TransactionFilterDrawer.svelte`, `TransactionMobileCard.svelte` (isolasi touch swipe gestures), dan `TransactionDesktopTable.svelte`.
+- [x] Refactor `src/lib/db.js` dengan memisahkan modul pembantu: `src/lib/db/balances.js` (`computeAccountBalances`), `src/lib/db/dedupe.js` (`planMerge`), dan `src/lib/db/seed.js`.
+- [x] Verifikasi seluruh alur input, edit, swipe kartu, dan kalkulasi saldo tetap berfungsi presisi dan `npm run build` lolos.
+
+##### 📋 Prompt Siap Pakai — P2 (Chat Baru):
+```text
+Acuan kita adalah @PRD.md, @GEMINI.md, dan @PROGRESS.md.
+Kerjakan FASE 2.5 PRIORITAS 2 (P2: Modularisasi Komponen Raksasa):
+1. Pecah `src/components/TransactionForm.svelte` menjadi sub-komponen terisolasi (`CalculatorKeypad.svelte`, `TransactionItemsTable.svelte`, `ReceiptAttachmentField.svelte`).
+2. Pecah `src/components/TransactionList.svelte` menjadi `TransactionFilterDrawer.svelte`, `TransactionMobileCard.svelte`, dan `TransactionDesktopTable.svelte`.
+3. Pindahkan kalkulasi saldo ke `src/lib/db/balances.js` dan deduplikasi ke `src/lib/db/dedupe.js` tanpa merusak export backward-compatibility di `src/lib/db.js`.
+4. Jalankan `npm run build` untuk memastikan tidak ada broken props / imports dan update checklist P2 di @PROGRESS.md.
+```
+
+---
+
+#### PRIORITAS 3 (P3): Automated Testing (Vitest) Logika Akuntansi & Core Utils
+**Target Sesi Ini:** Memasang test runner `vitest` dan membuat unit test untuk fungsi-fungsi kritis (kalkulasi saldo dana talangan/reimburse, evaluasi matematika nominal, parser struk, dan integritas zip XLSX).
+
+##### Checklist P3:
+- [ ] Pasang `vitest` sebagai devDependencies dan buat script `"test": "vitest run"` di `package.json`.
+- [ ] Buat unit test akuntansi `tests/balances.test.js`: pengujian saldo cross-workspace, reimbursement pending vs settled, dan transfer dompet.
+- [ ] Buat unit test `tests/utils.test.js`: pengujian `evaluateNominalExpression`, `formatIDR`, `uuidv7`, dan `deterministicUuidV7`.
+- [ ] Buat unit test `tests/xlsxEngine.test.js`: validasi integritas zip header dan sheet XML generation.
+- [ ] Jalankan `npm run test` dan `npm run build` hingga seluruh test suites berstatus hijau (PASS).
+
+##### 📋 Prompt Siap Pakai — P3 (Chat Baru):
+```text
+Acuan kita adalah @PRD.md, @GEMINI.md, dan @PROGRESS.md.
+Kerjakan FASE 2.5 PRIORITAS 3 (P3: Automated Testing dengan Vitest):
+1. Pasang `vitest` di devDependencies dan tambahkan script npm `test`.
+2. Tulis automated unit test untuk logika krusial di folder `tests/`:
+   - `balances.test.js`: kalkulasi saldo akun termasuk reimbursement lintas buku (Pribadi -> Kopdes/Usaha) status pending & settled.
+   - `utils.test.js`: evaluasi nominal kalkulator, format Rupiah, dan deterministik UUID v7.
+   - `xlsxEngine.test.js`: verifikasi generator ZIP OOXML native tidak menghasilkan file corrupt.
+3. Jalankan `npm run test` dan pastikan seluruh test 100% lolos (PASS).
+4. Update checklist P3 di @PROGRESS.md.
+```
+
+---
+
+#### PRIORITAS 4 (P4): Type Safety Contract (`src/types.d.ts`) & Code Documentation
+**Target Sesi Ini:** Menyediakan file definisi tipe TypeScript / JSDoc (`src/types.d.ts`) terpusat untuk seluruh entitas database dan event modal agar developer lain mendapatkan autocomplete presisi di editor.
+
+##### Checklist P4:
+- [ ] Buat berkas `src/types.d.ts` berisi tipe lengkap: `Workspace`, `Account`, `Category`, `Transaction`, `TransactionItem`, `ItemAlias`, `TransactionMetadata`, dan `SyncState`.
+- [ ] Beri JSDoc type annotation pada fungsi-fungsi publik di `src/lib/db.js`, `src/lib/utils.js`, dan adapter sync.
+- [ ] Verifikasi tidak ada error linting dan `npm run build` tetap bersih.
+
+##### 📋 Prompt Siap Pakai — P4 (Chat Baru):
+```text
+Acuan kita adalah @PRD.md, @GEMINI.md, dan @PROGRESS.md.
+Kerjakan FASE 2.5 PRIORITAS 4 (P4: Type Safety & JSDoc Definition):
+1. Buatkan berkas `src/types.d.ts` yang mendefinisikan seluruh struktur schema data Dexie.js (Workspaces, Accounts, Categories, Transactions, TransactionItems, ItemAliases) lengkap dengan atribut `metadata` (reimburse, unit_usaha, no_bukti).
+2. Tambahkan JSDoc `@type` & `@param` pada modul database dan utils utama untuk memberikan DX autocomplete maksimal bagi developer lain.
+3. Jalankan `npm run build` dan update checklist P4 di @PROGRESS.md.
+```
+
+---
+
+#### PRIORITAS 5 (P5): Optimasi Memori Blob Gambar di IndexedDB & Adaptive Sync Polling
+**Target Sesi Ini:** Mengurangi konsumsi RAM IndexedDB dengan memisahkan pemuatan blob foto struk dari query list transaksi harian, serta menerapkan adaptive throttling pada interval sync.
+
+##### Checklist P5:
+- [ ] Modifikasi `loadAppData()` di `src/lib/db.js` agar tidak me-load `attachment_blob` secara massal (hanya load metadata `has_attachment: Boolean`).
+- [ ] Buat helper `getTransactionAttachment(txId)` untuk memuat blob hanya ketika `ReceiptPreviewModal` dibuka atau saat struk sedang diedit.
+- [ ] Terapkan interval sync adaptif di `src/lib/sync/syncEngine.js` (tingkatkan interval dari 30s ke 60s atau gunakan backoff saat tidak ada perubahan).
+- [ ] Verifikasi memory footprint berkurang dan `npm run build` sukses.
+
+##### 📋 Prompt Siap Pakai — P5 (Chat Baru):
+```text
+Acuan kita adalah @PRD.md, @GEMINI.md, dan @PROGRESS.md.
+Kerjakan FASE 2.5 PRIORITAS 5 (P5: Database Memory & Sync Throttling):
+1. Optimalkan `loadAppData()` agar tidak menarik kolom `attachment_blob` ke RAM secara massal saat menampilkan daftar transaksi; sediakan pemanggilan lazy `getTransactionAttachment(txId)` khusus saat modal preview struk dibuka.
+2. Perbarui interval polling `syncEngine.js` menjadi lebih hemat daya (60 detik dengan adaptive backoff saat idle) tanpa mengurangi reaktivitas online event.
+3. Jalankan `npm run build`, uji preview struk, dan update checklist P5 di @PROGRESS.md.
 ```
 
 ---

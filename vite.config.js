@@ -109,5 +109,28 @@ export default defineConfig({
         ]
       }
     })
-  ]
+  ],
+  build: {
+    target: 'esnext',
+    chunkSizeWarningLimit: 500,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, '/');
+          if (normalized.includes('/node_modules/dexie/')) {
+            return 'vendor-dexie';
+          }
+          if (normalized.includes('/src/lib/utils/xlsxEngine.js')) {
+            return 'xlsx-engine';
+          }
+          if (normalized.includes('/src/lib/parsers/receiptParser.js')) {
+            return 'receipt-parser';
+          }
+          if (normalized.includes('/src/lib/utils/cryptoBackup.js')) {
+            return 'crypto-backup';
+          }
+        }
+      }
+    }
+  }
 });

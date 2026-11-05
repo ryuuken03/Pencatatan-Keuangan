@@ -13,7 +13,7 @@
     verifyPinLock,
     disablePinLock,
   } from "../lib/utils/cryptoBackup.js";
-  import { downloadBlobFile } from "../lib/utils/csvExporter.js";
+  import { downloadBlobFile } from "../lib/utils/fileDownload.js";
   import { getWorkspaceTheme } from "../lib/utils.js";
   import { registerModalHistory } from "../lib/utils/modalHistory.js";
 

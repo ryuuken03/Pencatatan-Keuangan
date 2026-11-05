@@ -1,7 +1,24 @@
 import Dexie from 'dexie';
-import { uuidv7, deterministicUuidV7 } from './utils.js';
+import { uuidv7 } from './utils.js';
 import { blobToSerializable, serializableToBlob } from './utils/cryptoBackup.js';
 import { normalizeForMatch } from './utils/fuzzyMatcher.js';
+import { computeAccountBalances } from './db/balances.js';
+import {
+  KOPDES_UNITS,
+  DEFAULT_ACCOUNTS,
+  DEFAULT_CATEGORIES,
+  SEED_EPOCH_ISO,
+  SEED_EPOCH_MS,
+  isUntouchedSeed,
+  seedAccountId,
+  seedCategoryId,
+  seedDatabase as runSeed
+} from './db/seed.js';
+import {
+  planMerge,
+  resolveMergedId,
+  dedupeAccountsAndCategories as runDedupe
+} from './db/dedupe.js';
 
 export const db = new Dexie('AplikasiKeuanganDB');
 
@@ -71,348 +88,25 @@ db.version(3).stores({
 
 export const MAX_ITEM_ALIASES = 2000;
 
-export const KOPDES_UNITS = [
-  'Unit Simpan Pinjam (USP)',
-  'Unit Toko/Ritel',
-  'Unit Pertanian/Pupuk',
-  'Jasa/Lainnya',
-  'Umum/Sekretariat'
-];
-
-export const DEFAULT_ACCOUNTS = [
-  // Pribadi
-  { workspace_id: 'personal', name: 'Dompet Tunai', type: 'cash', initial_balance: 0 },
-  { workspace_id: 'personal', name: 'Bank Pribadi', type: 'bank', initial_balance: 0 },
-  { workspace_id: 'personal', name: 'E-Wallet', type: 'ewallet', initial_balance: 0 },
-  // Usaha
-  { workspace_id: 'business', name: 'Kas Tunai Usaha', type: 'cash', initial_balance: 0 },
-  { workspace_id: 'business', name: 'Rekening Usaha', type: 'bank', initial_balance: 0 },
-  // Kopdes
-  { workspace_id: 'kopdes', name: 'Kas Kecil Kopdes', type: 'cash', initial_balance: 0 },
-  { workspace_id: 'kopdes', name: 'BRI Kopdes', type: 'bank', initial_balance: 0 }
-];
-
-export const DEFAULT_CATEGORIES = [
-  // Pribadi - Expense
-  { workspace_id: 'personal', name: 'Pengeluaran Pribadi', type: 'expense' },
-  { workspace_id: 'personal', name: 'Kesehatan & Pendidikan', type: 'expense' },
-  { workspace_id: 'personal', name: 'Makan & Minuman', type: 'expense' },
-  { workspace_id: 'personal', name: 'Transportasi & BBM', type: 'expense' },
-  { workspace_id: 'personal', name: 'Tagihan & Komunikasi', type: 'expense' },
-  // Pribadi - Income
-  { workspace_id: 'personal', name: 'Pemasukan Lainnya', type: 'income' },
-  { workspace_id: 'personal', name: 'Investasi / Bagi Hasil', type: 'income' },
-  { workspace_id: 'personal', name: 'Gaji & Pendapatan', type: 'income' },
-
-  // Usaha - Income
-  { workspace_id: 'business', name: 'Omzet Penjualan', type: 'income' },
-  { workspace_id: 'business', name: 'Suntikan Modal', type: 'income' },
-  { workspace_id: 'business', name: 'Pelunasan Piutang Pelanggan', type: 'income' },
-  // Usaha - Expense
-  { workspace_id: 'business', name: 'HPP / Pembelian Bahan', type: 'expense' },
-  { workspace_id: 'business', name: 'Operasional & Listrik Usaha', type: 'expense' },
-  { workspace_id: 'business', name: 'Upah Karyawan / Tenaga', type: 'expense' },
-  { workspace_id: 'business', name: 'Pemasaran & Distribusi', type: 'expense' },
-
-  // Kopdes - Income (Sesuai PRD 3.3)
-  { workspace_id: 'kopdes', name: 'Setoran Unit Usaha', type: 'income' },
-  { workspace_id: 'kopdes', name: 'Simpanan Pokok/Wajib/Sukarela', type: 'income' },
-  { workspace_id: 'kopdes', name: 'Angsuran Masuk', type: 'income' },
-  { workspace_id: 'kopdes', name: 'Dana Hibah/Penyertaan', type: 'income' },
-  { workspace_id: 'kopdes', name: 'Lain-lain', type: 'income' },
-  // Kopdes - Expense (Sesuai PRD 3.3)
-  { workspace_id: 'kopdes', name: 'Belanja Barang Unit', type: 'expense' },
-  { workspace_id: 'kopdes', name: 'Biaya Operasional Kantor (ATK/Listrik/Konsumsi)', type: 'expense' },
-  { workspace_id: 'kopdes', name: 'Honor/Gaji Pengurus & Staf', type: 'expense' },
-  { workspace_id: 'kopdes', name: 'Pencairan Pinjaman', type: 'expense' },
-  { workspace_id: 'kopdes', name: 'Perjalanan Dinas/Rapat', type: 'expense' },
-  { workspace_id: 'kopdes', name: 'Lain-lain', type: 'expense' }
-];
-
-/**
- * Seed default memakai ID deterministik + `updated_at` epoch lama:
- * - ID sama di semua perangkat -> upsert Supabase tidak menggandakan baris.
- * - `updated_at` lama -> versi remote (hasil edit user) selalu menang saat pull (LWW).
- */
-export const SEED_EPOCH_ISO = '2024-01-01T00:00:00.000Z';
-const SEED_EPOCH_MS = Date.parse(SEED_EPOCH_ISO);
-
-const normName = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
-const accountKey = (a) => `${a.workspace_id}|${normName(a.name)}`;
-const categoryKey = (c) => `${c.workspace_id}|${c.type}|${normName(c.name)}`;
-const toTime = (iso) => {
-  const t = new Date(iso || 0).getTime();
-  return Number.isFinite(t) ? t : 0;
+export {
+  KOPDES_UNITS,
+  DEFAULT_ACCOUNTS,
+  DEFAULT_CATEGORIES,
+  SEED_EPOCH_ISO,
+  SEED_EPOCH_MS,
+  isUntouchedSeed,
+  seedAccountId,
+  seedCategoryId
 };
-export const isUntouchedSeed = (r) => toTime(r.updated_at) === SEED_EPOCH_MS;
-
-export function seedAccountId(a) {
-  return deterministicUuidV7(`seed:account:${accountKey(a)}`, SEED_EPOCH_MS);
-}
-
-export function seedCategoryId(c) {
-  return deterministicUuidV7(`seed:category:${categoryKey(c)}`, SEED_EPOCH_MS);
-}
 
 export async function seedDatabase() {
-  const wsCount = await db.workspaces.count();
-  if (wsCount > 0) {
-    // Pastikan type dan label terkini ada pada tiap workspace yang sudah ada
-    const existingWorkspaces = await db.workspaces.toArray();
-    for (const ws of existingWorkspaces) {
-      const updates = {};
-      if (!ws.type) {
-        if (ws.id === 'business') updates.type = 'business';
-        else if (ws.id === 'kopdes' || ws.id === 'pekerjaan') updates.type = 'pekerjaan';
-        else updates.type = 'personal';
-      }
-      if (ws.id === 'personal' && ws.name === 'Pribadi') updates.name = 'Buku Pribadi';
-      if (ws.id === 'business' && ws.name === 'Usaha') updates.name = 'Buku Usaha';
-      if (ws.id === 'kopdes' && (ws.name === 'Kopdes' || ws.name === 'Manager Kopdes')) updates.name = 'Buku Pekerjaan';
-      if (Object.keys(updates).length > 0) {
-        await db.workspaces.update(ws.id, updates);
-      }
-    }
-
-    // Pastikan dompet seed default yang belum pernah diubah user bersaldo awal 0
-    const existingAccounts = await db.accounts.toArray();
-    for (const acc of existingAccounts) {
-      if (!acc.deleted_at && isUntouchedSeed(acc) && Number(acc.initial_balance) !== 0) {
-        await db.accounts.update(acc.id, {
-          initial_balance: 0,
-          sync_status: 'pending'
-        });
-      }
-    }
-
-    // Sinkronisasi nama kategori lama Buku Pribadi jika masih memakai label sebelumnya
-    const renameMap = {
-      'Makan & Kebutuhan Rumah': 'Makan & Minuman',
-      'Hasil Investasi / Bagi Hasil': 'Investasi / Bagi Hasil',
-      'Pengeluaran Pribadi Lainnya': 'Pengeluaran Pribadi'
-    };
-    const personalCats = await db.categories.where('workspace_id').equals('personal').toArray();
-    const nowUpdate = new Date().toISOString();
-    for (const cat of personalCats) {
-      if (!cat.deleted_at && renameMap[cat.name]) {
-        const targetName = renameMap[cat.name];
-        const alreadyExists = personalCats.some(
-          (c) => !c.deleted_at && c.id !== cat.id && c.name.toLowerCase() === targetName.toLowerCase()
-        );
-        if (!alreadyExists) {
-          await db.categories.update(cat.id, {
-            name: targetName,
-            updated_at: nowUpdate,
-            sync_status: 'pending'
-          });
-        }
-      }
-    }
-    await dedupeAccountsAndCategories();
-    return;
-  }
-
-  await db.transaction('rw', db.workspaces, db.accounts, db.categories, async () => {
-    // 1. Seed Workspaces: HANYA Buku Pribadi saat pertama kali dibuka
-    await db.workspaces.bulkPut([
-      {
-        id: 'personal',
-        name: 'Buku Pribadi',
-        type: 'personal',
-        currency: 'IDR',
-        created_at: SEED_EPOCH_ISO,
-        updated_at: SEED_EPOCH_ISO,
-        deleted_at: null,
-        sync_status: 'pending'
-      }
-    ]);
-
-    // 2. Seed Accounts: HANYA dompet bawaan Buku Pribadi
-    const personalAccounts = DEFAULT_ACCOUNTS
-      .filter((a) => a.workspace_id === 'personal')
-      .map((a) => ({
-        id: seedAccountId(a),
-        workspace_id: a.workspace_id,
-        name: a.name,
-        type: a.type,
-        initial_balance: a.initial_balance,
-        created_at: SEED_EPOCH_ISO,
-        updated_at: SEED_EPOCH_ISO,
-        deleted_at: null,
-        sync_status: 'pending'
-      }));
-    await db.accounts.bulkPut(personalAccounts);
-
-    // 3. Seed Categories: HANYA kategori bawaan Buku Pribadi
-    const personalCategories = DEFAULT_CATEGORIES
-      .filter((c) => c.workspace_id === 'personal')
-      .map((c) => ({
-        id: seedCategoryId(c),
-        workspace_id: c.workspace_id,
-        name: c.name,
-        type: c.type,
-        created_at: SEED_EPOCH_ISO,
-        updated_at: SEED_EPOCH_ISO,
-        deleted_at: null,
-        sync_status: 'pending'
-      }));
-
-    await db.categories.bulkPut(personalCategories);
-  });
+  return runSeed(db, () => dedupeAccountsAndCategories());
 }
 
-/**
- * Rencana merge duplikat dalam satu tabel berdasarkan natural key.
- * Kanonik = record aktif non-seed-asli dengan ID terkecil (deterministik di semua perangkat).
- * Nilai field diambil dari record yang paling baru diubah. Duplikat -> soft delete + `merged_into`.
- */
-function planMerge(records, keyFn, fields, referencedIds, now) {
-  const groups = new Map();
-  for (const r of records) {
-    if (r.merged_into) continue;
-    const k = keyFn(r);
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(r);
-  }
+export { planMerge, resolveMergedId };
 
-  const changes = [];
-  for (const group of groups.values()) {
-    const active = group.filter((r) => !r.deleted_at);
-    if (active.length === 0) continue;
-
-    if (active.length === 1) {
-      // Default yang pernah dihapus user di perangkat lain jangan dihidupkan lagi oleh seed baru
-      const only = active[0];
-      if (isUntouchedSeed(only) && !referencedIds.has(only.id) && group.some((r) => r.deleted_at)) {
-        changes.push({ ...only, deleted_at: now, updated_at: now, sync_status: 'pending' });
-      }
-      continue;
-    }
-
-    const sorted = [...active].sort((a, b) => {
-      const sa = isUntouchedSeed(a) ? 1 : 0;
-      const sb = isUntouchedSeed(b) ? 1 : 0;
-      if (sa !== sb) return sa - sb;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    });
-    const canonical = sorted[0];
-    const latest = active.reduce(
-      (best, r) => (toTime(r.updated_at) > toTime(best.updated_at) ? r : best),
-      canonical
-    );
-
-    if (latest !== canonical) {
-      const patched = { ...canonical };
-      let changed = false;
-      for (const f of fields) {
-        if (latest[f] !== undefined && latest[f] !== canonical[f]) {
-          patched[f] = latest[f];
-          changed = true;
-        }
-      }
-      if (changed) changes.push({ ...patched, updated_at: now, sync_status: 'pending' });
-    }
-
-    for (const dup of sorted.slice(1)) {
-      changes.push({
-        ...dup,
-        merged_into: canonical.id,
-        deleted_at: now,
-        updated_at: now,
-        sync_status: 'pending'
-      });
-    }
-  }
-  return changes;
-}
-
-function resolveMergedId(map, id) {
-  let cur = id;
-  let guard = 0;
-  while (cur && map.has(cur) && guard++ < 32) cur = map.get(cur);
-  return cur;
-}
-
-/**
- * Gabungkan Dompet & Kategori duplikat (nama sama dalam buku yang sama),
- * lalu remap seluruh referensi transaksi ke ID kanonik.
- */
 export async function dedupeAccountsAndCategories() {
-  const now = new Date().toISOString();
-  let merged = 0;
-  let remapped = 0;
-
-  await db.transaction('rw', db.accounts, db.categories, db.transactions, async () => {
-    const [accounts, categories, txs] = await Promise.all([
-      db.accounts.toArray(),
-      db.categories.toArray(),
-      db.transactions.toArray()
-    ]);
-
-    const referenced = new Set();
-    for (const tx of txs) {
-      if (tx.deleted_at) continue;
-      if (tx.account_id) referenced.add(tx.account_id);
-      if (tx.to_account_id) referenced.add(tx.to_account_id);
-      if (tx.category_id) referenced.add(tx.category_id);
-      if (tx.metadata?.reimburse_from_account_id) referenced.add(tx.metadata.reimburse_from_account_id);
-    }
-
-    const accChanges = planMerge(accounts, accountKey, ['name', 'type', 'initial_balance'], referenced, now);
-    const catChanges = planMerge(categories, categoryKey, ['name', 'type', 'keywords'], referenced, now);
-
-    if (accChanges.length) await db.accounts.bulkPut(accChanges);
-    if (catChanges.length) await db.categories.bulkPut(catChanges);
-    merged = accChanges.filter((r) => r.merged_into).length + catChanges.filter((r) => r.merged_into).length;
-
-    // Peta remap (termasuk merge lama dari perangkat lain via `merged_into`)
-    const accMap = new Map();
-    const catMap = new Map();
-    const accChangeById = new Map(accChanges.map((r) => [r.id, r]));
-    const catChangeById = new Map(catChanges.map((r) => [r.id, r]));
-    for (const a of accounts) {
-      const cur = accChangeById.get(a.id) || a;
-      if (cur.merged_into) accMap.set(cur.id, cur.merged_into);
-    }
-    for (const c of categories) {
-      const cur = catChangeById.get(c.id) || c;
-      if (cur.merged_into) catMap.set(cur.id, cur.merged_into);
-    }
-    if (accMap.size === 0 && catMap.size === 0) return;
-
-    const txUpdates = [];
-    for (const tx of txs) {
-      if (tx.deleted_at) continue;
-      const meta = tx.metadata || {};
-      const accountId = resolveMergedId(accMap, tx.account_id);
-      const toAccountId = tx.to_account_id ? resolveMergedId(accMap, tx.to_account_id) : tx.to_account_id;
-      const categoryId = tx.category_id ? resolveMergedId(catMap, tx.category_id) : tx.category_id;
-      const reimburseFrom = meta.reimburse_from_account_id
-        ? resolveMergedId(accMap, meta.reimburse_from_account_id)
-        : meta.reimburse_from_account_id;
-
-      if (
-        accountId !== tx.account_id ||
-        toAccountId !== tx.to_account_id ||
-        categoryId !== tx.category_id ||
-        reimburseFrom !== meta.reimburse_from_account_id
-      ) {
-        txUpdates.push({
-          ...tx,
-          account_id: accountId,
-          to_account_id: toAccountId,
-          category_id: categoryId,
-          metadata: { ...meta, reimburse_from_account_id: reimburseFrom ?? null },
-          updated_at: now,
-          sync_status: 'pending'
-        });
-      }
-    }
-    if (txUpdates.length) await db.transactions.bulkPut(txUpdates);
-    remapped = txUpdates.length;
-  });
-
-  return { merged, remapped };
+  return runDedupe(db);
 }
 
 /**
@@ -463,65 +157,7 @@ export async function loadAppData() {
   };
 }
 
-/**
- * Hitung saldo aktual tiap akun (Dompet) berdasarkan transaksi aktif, termasuk logika Dana Talangan / Reimburse
- * PRD 3.4:
- * - Pengeluaran Kopdes/Usaha dengan reimburse_status === 'pending' dan reimburse_from_account_id:
- *   1. Tercatat sebagai pengeluaran di buku Kopdes/Usaha (namun belum memotong kas Kopdes/Usaha karena ditalangi pribadi).
- *   2. Mengurangi saldo dompet di buku Pribadi (reimburse_from_account_id).
- * - Ketika ditandai 'settled' (Sudah Diganti):
- *   1. Saldo kas Kopdes/Usaha (tx.account_id) berkurang sebesar amount.
- *   2. Saldo dompet Pribadi (reimburse_from_account_id) kembali utuh (tidak lagi terpotong oleh talangan ini).
- */
-export function computeAccountBalances(accounts, transactions) {
-  const balances = {};
-  for (const acc of accounts) {
-    balances[acc.id] = Number(acc.initial_balance) || 0;
-  }
-
-  for (const tx of transactions) {
-    if (tx.deleted_at) continue;
-    const amt = Number(tx.amount) || 0;
-    const meta = tx.metadata || {};
-
-    if (tx.type === 'income') {
-      if (balances[tx.account_id] !== undefined) {
-        balances[tx.account_id] += amt;
-      }
-    } else if (tx.type === 'expense') {
-      if (meta.reimburse_status === 'pending' && meta.reimburse_from_account_id) {
-        // Ditalangi oleh dompet pribadi -> kurangi dompet pribadi
-        if (balances[meta.reimburse_from_account_id] !== undefined) {
-          balances[meta.reimburse_from_account_id] -= amt;
-        }
-      } else {
-        // Normal expense atau reimburse 'settled' -> kurangi akun di buku terkait
-        if (balances[tx.account_id] !== undefined) {
-          balances[tx.account_id] -= amt;
-        }
-      }
-    } else if (tx.type === 'transfer') {
-      if (balances[tx.account_id] !== undefined) {
-        balances[tx.account_id] -= amt;
-      }
-      if (tx.to_account_id && balances[tx.to_account_id] !== undefined) {
-        balances[tx.to_account_id] += amt;
-      }
-    } else if (tx.type === 'debt') {
-      // Kasbon/Utang Masuk (terima pinjaman menambah kas)
-      if (balances[tx.account_id] !== undefined) {
-        balances[tx.account_id] += amt;
-      }
-    } else if (tx.type === 'receivable') {
-      // Kasbon/Piutang Keluar (memberi kasbon mengurangi kas)
-      if (balances[tx.account_id] !== undefined) {
-        balances[tx.account_id] -= amt;
-      }
-    }
-  }
-
-  return balances;
-}
+export { computeAccountBalances };
 
 /**
  * CRUD Transaksi + Tabel Opsional `transaction_items` (0..N item produk)

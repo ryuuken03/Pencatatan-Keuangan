@@ -1,8 +1,8 @@
 /**
- * Re-export modul Excel (.xlsx) Engine
+ * Re-export modul Excel (.xlsx) Engine & Utilitas Download
  */
+export { downloadBlobFile } from './fileDownload.js';
 export {
-  downloadBlobFile,
   exportTransactionsToXLSX,
   exportFullReportToXLSX,
   parseTransactionsFromXlsxBuffer,

@@ -1,5 +1,5 @@
 <script>
-  import { untrack, onDestroy } from "svelte";
+  import { untrack } from "svelte";
   import {
     evaluateNominalExpression,
     formatNumber,
@@ -10,8 +10,10 @@
     getWorkspaceType
   } from "../lib/utils.js";
   import { KOPDES_UNITS } from "../lib/db.js";
-  import { compressReceiptImage } from "../lib/utils/imageCompressor.js";
   import { registerModalHistory } from "../lib/utils/modalHistory.js";
+  import CalculatorKeypad from "./CalculatorKeypad.svelte";
+  import TransactionItemsTable from "./TransactionItemsTable.svelte";
+  import ReceiptAttachmentField from "./ReceiptAttachmentField.svelte";
 
   let {
     isOpen = false,
@@ -57,10 +59,6 @@
 
   // Lampiran Struk WebP (< 80 KB)
   let attachment_blob = $state(null);
-  let attachmentPreviewUrl = $state("");
-  let attachmentSizeKB = $state(0);
-  let isCompressingImg = $state(false);
-  let directFileInputEl = $state(null);
 
   // Rincian Produk / Item Opsional (Tabel `transaction_items`)
   let txItems = $state([]);
@@ -81,44 +79,6 @@
       (useReimburse ? 1 : 0) +
       (no_bukti.trim() || pic_pihak.trim() ? 1 : 0),
   );
-
-  function updateAttachmentPreview(blob) {
-    if (attachmentPreviewUrl) {
-      URL.revokeObjectURL(attachmentPreviewUrl);
-      attachmentPreviewUrl = "";
-    }
-    attachment_blob = blob || null;
-    if (blob) {
-      attachmentPreviewUrl = URL.createObjectURL(blob);
-      attachmentSizeKB = Math.round(((blob.size || 0) / 1024) * 10) / 10;
-    } else {
-      attachmentSizeKB = 0;
-    }
-  }
-
-  onDestroy(() => {
-    if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
-  });
-
-  async function handleDirectAttachmentChange(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    isCompressingImg = true;
-    errorMsg = "";
-    try {
-      const comp = await compressReceiptImage(file, {
-        maxDimension: 1000,
-        initialQuality: 0.6,
-        highContrast: false,
-      });
-      updateAttachmentPreview(comp.blob);
-    } catch (err) {
-      errorMsg = err?.message || "Gagal mengompres foto lampiran.";
-    } finally {
-      isCompressingImg = false;
-      e.target.value = "";
-    }
-  }
 
   let effectiveWorkspaces = $derived(
     workspaces && workspaces.length > 0
@@ -227,7 +187,7 @@
             reimburse_status === "pending" || reimburse_status === "settled";
           reimburse_from_account_id =
             meta.reimburse_from_account_id || (personalAccounts[0]?.id ?? "");
-          updateAttachmentPreview(init.attachment_blob || null);
+          attachment_blob = init?.attachment_blob || null;
         } else {
           workspace_id = init?.workspace_id || activeWorkspace;
           type = init?.type || "expense";
@@ -269,7 +229,7 @@
               ? init.category_id
               : wsCats[0]?.id || "";
 
-          updateAttachmentPreview(init?.attachment_blob || null);
+          attachment_blob = init?.attachment_blob || null;
         }
       });
     }
@@ -796,45 +756,12 @@
                 </div>
 
                 <!-- Tombol Kalkulator: Selalu tampil di Desktop, Collapsible/Auto-Focus di Mobile -->
-                <div
-                  class="{showCalcPad
-                    ? 'block'
-                    : 'hidden md:block'} space-y-1.5 pt-0.5"
-                >
-                  <div class="grid grid-cols-4 gap-1.5">
-                    {#each [{ label: "+10rb", val: 10000 }, { label: "+50rb", val: 50000 }, { label: "+100rb", val: 100000 }, { label: ".000", op: "000" }] as item}
-                      <button
-                        type="button"
-                        onclick={() =>
-                          item.op
-                            ? appendQuickMath(item.op)
-                            : addPresetAmount(item.val)}
-                        class="py-1.5 bg-white hover:bg-slate-100 active:bg-slate-200 border border-slate-200/90 rounded-lg text-[11px] font-extrabold text-slate-700 tabular-nums cursor-pointer transition-colors"
-                      >
-                        {item.label}
-                      </button>
-                    {/each}
-                  </div>
-
-                  <div class="grid grid-cols-5 gap-1.5">
-                    {#each [{ label: "+", op: "+" }, { label: "−", op: "-" }, { label: "×", op: "*" }, { label: "÷", op: "/" }] as calc}
-                      <button
-                        type="button"
-                        onclick={() => appendQuickMath(calc.op)}
-                        class="py-1.5 bg-white hover:bg-slate-100 active:bg-slate-200 border border-slate-300 rounded-lg text-sm font-extrabold text-slate-800 tabular-nums cursor-pointer transition-colors"
-                      >
-                        {calc.label}
-                      </button>
-                    {/each}
-                    <button
-                      type="button"
-                      onclick={handleAmountBlur}
-                      class="py-1.5 bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white rounded-lg text-xs font-extrabold tabular-nums cursor-pointer transition-colors"
-                    >
-                      =
-                    </button>
-                  </div>
-                </div>
+                <CalculatorKeypad
+                  show={showCalcPad}
+                  onAppend={appendQuickMath}
+                  onAddPreset={addPresetAmount}
+                  onEvaluate={handleAmountBlur}
+                />
               </div>
 
               <!-- 3. Pilih Dompet Kas -->
@@ -1010,7 +937,7 @@
                         ? `${txItems.length} Produk`
                         : "Rincian"}
                       {attachment_blob
-                        ? ` • Struk (${attachmentSizeKB} KB)`
+                        ? ` • Struk (${Math.round(((attachment_blob.size || 0) / 1024) * 10) / 10} KB)`
                         : ""}
                       {useReimburse ? " • Talangan" : ""}
                       {no_bukti ? ` • #${no_bukti}` : ""}
@@ -1053,182 +980,23 @@
               </div>
 
               <!-- 7. Rincian Produk / Item Opsional (Tabel `transaction_items`) -->
-              <div
-                class="p-3 bg-slate-50 border border-slate-200/90 rounded-2xl space-y-2.5"
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <div>
-                    <span
-                      class="block text-[11px] font-bold uppercase text-slate-500"
-                    >
-                      Rincian Produk ({txItems.length} item)
-                    </span>
-                    <span class="text-[10px] text-slate-400"> Opsional</span>
-                  </div>
-                  <div class="flex items-center gap-1.5">
-                    {#if txItems.length > 0}
-                      <button
-                        type="button"
-                        onclick={clearAllTxItems}
-                        class="px-2 py-1 text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer"
-                      >
-                        Reset
-                      </button>
-                    {/if}
-                    <button
-                      type="button"
-                      onclick={addTxItem}
-                      class="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg cursor-pointer"
-                    >
-                      + Produk
-                    </button>
-                  </div>
-                </div>
-
-                {#if txItems.length > 0}
-                  <div class="space-y-1.5 max-h-44 overflow-y-auto pr-0.5">
-                    {#each txItems as item, idx (item.id || idx)}
-                      <div class="flex items-center gap-1.5">
-                        <input
-                          type="text"
-                          placeholder="Nama produk..."
-                          bind:value={item.name}
-                          class="flex-1 min-w-0 px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:outline-none focus:border-slate-900"
-                        />
-                        <div class="relative w-28 shrink-0 flex items-center">
-                          <span
-                            class="absolute left-2 text-[10px] font-bold text-slate-400 pointer-events-none"
-                          >
-                            Rp
-                          </span>
-                          <input
-                            type="text"
-                            inputmode="numeric"
-                            placeholder="0"
-                            value={item.amountInput}
-                            oninput={(e) => handleItemAmountInput(idx, e)}
-                            class="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-extrabold tabular-nums text-right focus:outline-none focus:border-slate-900"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onclick={() => removeTxItem(idx)}
-                          class="p-1 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer shrink-0"
-                          aria-label="Hapus item"
-                        >
-                          <svg
-                            class="w-4 h-4"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2.2"
-                          >
-                            <path
-                              d="M18 6L6 18M6 6l12 12"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                            />
-                          </svg>
-                        </button>
-                      </div>
-                    {/each}
-                  </div>
-
-                  <div
-                    class="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2 text-xs"
-                  >
-                    <span class="text-[11px] font-bold text-slate-500">
-                      Subtotal ({txItems.length} item):
-                    </span>
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-extrabold tabular-nums text-slate-900">
-                        {formatIDR(itemsSubtotal)}
-                      </span>
-                      {#if itemsSubtotal > 0 && itemsSubtotal !== evaluatedAmount}
-                        <button
-                          type="button"
-                          onclick={syncAmountFromItems}
-                          class="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-md text-[10px] font-extrabold cursor-pointer"
-                        >
-                          Samakan Total
-                        </button>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
-              </div>
+              <TransactionItemsTable
+                items={txItems}
+                {itemsSubtotal}
+                {evaluatedAmount}
+                onAddItem={addTxItem}
+                onRemoveItem={removeTxItem}
+                onClearAll={clearAllTxItems}
+                onItemAmountInput={handleItemAmountInput}
+                onSyncAmount={syncAmountFromItems}
+              />
 
               <!-- 8. Lampiran Foto Nota / Struk (WebP < 80 KB) -->
-              <div
-                class="p-3 bg-slate-50 border border-slate-200/90 rounded-2xl"
-              >
-                <input
-                  bind:this={directFileInputEl}
-                  type="file"
-                  accept="image/*"
-                  onchange={handleDirectAttachmentChange}
-                  class="hidden"
-                />
-                <div class="flex items-center justify-between gap-2">
-                  <div>
-                    <span
-                      class="block text-[11px] font-bold uppercase text-slate-500"
-                    >
-                      Lampiran Foto Struk
-                    </span>
-                    <span class="text-[10px] text-slate-400">
-                      {#if attachment_blob}
-                        WebP • {attachmentSizeKB} KB (&lt; 80 KB)
-                      {:else}
-                        Opsional
-                      {/if}
-                    </span>
-                  </div>
-
-                  <div class="flex items-center gap-1.5">
-                    {#if attachment_blob}
-                      <button
-                        type="button"
-                        onclick={() => updateAttachmentPreview(null)}
-                        class="px-2 py-1 text-[11px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg cursor-pointer"
-                      >
-                        Hapus
-                      </button>
-                    {/if}
-                    <button
-                      type="button"
-                      onclick={() => directFileInputEl?.click()}
-                      class="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg cursor-pointer"
-                    >
-                      {isCompressingImg
-                        ? "Kompres..."
-                        : attachment_blob
-                          ? "Ganti Foto"
-                          : "+ Foto"}
-                    </button>
-                  </div>
-                </div>
-
-                {#if attachmentPreviewUrl}
-                  <div
-                    class="mt-2 pt-2 border-t border-slate-200/80 flex items-center gap-2.5"
-                  >
-                    <img
-                      src={attachmentPreviewUrl}
-                      alt="Lampiran Struk"
-                      class="w-12 h-12 object-cover rounded-lg border border-slate-300 bg-white shrink-0"
-                    />
-                    <div class="text-[11px] text-slate-600 min-w-0">
-                      <div class="font-extrabold text-emerald-800 tabular-nums">
-                        ✓ Struk Siap Disimpan ({attachmentSizeKB} KB)
-                      </div>
-                      <p class="text-[10px] text-slate-400 truncate">
-                        Tersimpan lokal di IndexedDB.
-                      </p>
-                    </div>
-                  </div>
-                {/if}
-              </div>
+              <ReceiptAttachmentField
+                attachmentBlob={attachment_blob}
+                onAttachmentChange={(blob) => (attachment_blob = blob)}
+                onError={(msg) => (errorMsg = msg)}
+              />
 
               <!-- 9. Opsi Dana Talangan / Reimburse -->
               {#if isNonPersonal && type === "expense"}

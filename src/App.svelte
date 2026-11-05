@@ -24,12 +24,7 @@
   import TransactionList from './components/TransactionList.svelte';
   import TransactionForm from './components/TransactionForm.svelte';
   import ManageWalletCategoryModal from './components/ManageWalletCategoryModal.svelte';
-  import VoiceInputModal from './components/VoiceInputModal.svelte';
-  import ReceiptScannerModal from './components/ReceiptScannerModal.svelte';
   import ReceiptPreviewModal from './components/ReceiptPreviewModal.svelte';
-  import ReportExportModal from './components/ReportExportModal.svelte';
-  import SecurityBackupModal from './components/SecurityBackupModal.svelte';
-  import SyncSettingsModal from './components/SyncSettingsModal.svelte';
   import PinLockScreen from './components/PinLockScreen.svelte';
   import MobileBottomNav from './components/MobileBottomNav.svelte';
   import { syncEngine } from './lib/sync/syncEngine.js';
@@ -69,6 +64,53 @@
   let isReportModalOpen = $state(false);
   let isSecurityModalOpen = $state(false);
   let previewReceiptTx = $state(null);
+
+  // Lazy-loaded modal components (Dynamic import on-demand)
+  let VoiceInputModal = $state(null);
+  let ReceiptScannerModal = $state(null);
+  let ReportExportModal = $state(null);
+  let SecurityBackupModal = $state(null);
+  let SyncSettingsModal = $state(null);
+
+  $effect(() => {
+    if (isVoiceModalOpen && !VoiceInputModal) {
+      import('./components/VoiceInputModal.svelte').then((m) => {
+        VoiceInputModal = m.default;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (isReceiptModalOpen && !ReceiptScannerModal) {
+      import('./components/ReceiptScannerModal.svelte').then((m) => {
+        ReceiptScannerModal = m.default;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (isReportModalOpen && !ReportExportModal) {
+      import('./components/ReportExportModal.svelte').then((m) => {
+        ReportExportModal = m.default;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (isSecurityModalOpen && !SecurityBackupModal) {
+      import('./components/SecurityBackupModal.svelte').then((m) => {
+        SecurityBackupModal = m.default;
+      });
+    }
+  });
+
+  $effect(() => {
+    if (isSyncModalOpen && !SyncSettingsModal) {
+      import('./components/SyncSettingsModal.svelte').then((m) => {
+        SyncSettingsModal = m.default;
+      });
+    }
+  });
 
   async function refreshData() {
     const data = await loadAppData();
@@ -432,29 +474,33 @@
     />
 
     <!-- Modal Input Suara Pintar (Web Speech API + NLP Parser Bahasa Indonesia) -->
-    <VoiceInputModal
-      isOpen={isVoiceModalOpen}
-      workspaces={allWorkspaces}
-      {activeWorkspace}
-      {allAccounts}
-      {allCategories}
-      {allTransactions}
-      onApply={handleApplySmartInput}
-      onClose={() => (isVoiceModalOpen = false)}
-    />
+    {#if isVoiceModalOpen && VoiceInputModal}
+      <VoiceInputModal
+        isOpen={isVoiceModalOpen}
+        workspaces={allWorkspaces}
+        {activeWorkspace}
+        {allAccounts}
+        {allCategories}
+        {allTransactions}
+        onApply={handleApplySmartInput}
+        onClose={() => (isVoiceModalOpen = false)}
+      />
+    {/if}
 
     <!-- Modal Scan Foto Struk / Nota (Kompresi WebP < 80KB + OCR Regex Parser) -->
-    <ReceiptScannerModal
-      isOpen={isReceiptModalOpen}
-      workspaces={allWorkspaces}
-      {activeWorkspace}
-      {allAccounts}
-      {allCategories}
-      {allTransactions}
-      onApply={handleApplySmartInput}
-      onSave={handleSaveTransaction}
-      onClose={() => (isReceiptModalOpen = false)}
-    />
+    {#if isReceiptModalOpen && ReceiptScannerModal}
+      <ReceiptScannerModal
+        isOpen={isReceiptModalOpen}
+        workspaces={allWorkspaces}
+        {activeWorkspace}
+        {allAccounts}
+        {allCategories}
+        {allTransactions}
+        onApply={handleApplySmartInput}
+        onSave={handleSaveTransaction}
+        onClose={() => (isReceiptModalOpen = false)}
+      />
+    {/if}
 
     <!-- Modal Preview Lampiran Struk & Detail Transaksi -->
     <ReceiptPreviewModal
@@ -486,38 +532,42 @@
     />
 
     <!-- Modal Rekap Laporan, Export & Import Excel (.xlsx) -->
-    <ReportExportModal
-      isOpen={isReportModalOpen}
-      workspaces={allWorkspaces}
-      {activeWorkspace}
-      transactions={activeTransactions}
-      {allTransactions}
-      {accountsMap}
-      {categoriesMap}
-      onSettleReimburse={handleSettleReimburse}
-      onPreviewReceipt={(tx) => (previewReceiptTx = tx)}
-      onDataImported={refreshData}
-      onClose={() => (isReportModalOpen = false)}
-    />
+    {#if isReportModalOpen && ReportExportModal}
+      <ReportExportModal
+        isOpen={isReportModalOpen}
+        workspaces={allWorkspaces}
+        {activeWorkspace}
+        transactions={activeTransactions}
+        {allTransactions}
+        {accountsMap}
+        {categoriesMap}
+        onSettleReimburse={handleSettleReimburse}
+        onPreviewReceipt={(tx) => (previewReceiptTx = tx)}
+        onDataImported={refreshData}
+        onClose={() => (isReportModalOpen = false)}
+      />
+    {/if}
 
     <!-- Modal Backup JSON Terenkripsi AES-GCM 256-Bit & PIN Lock 6 Digit -->
-    <SecurityBackupModal
-      isOpen={isSecurityModalOpen}
-      workspaces={allWorkspaces}
-      {activeWorkspace}
-      onDataRestored={refreshData}
-      onLockAppNow={() => {
-        setSessionUnlocked(false);
-        isAppLocked = true;
-      }}
-      onPinStateChange={(enabled) => {
-        isPinEnabled = enabled;
-      }}
-      onClose={() => (isSecurityModalOpen = false)}
-    />
+    {#if isSecurityModalOpen && SecurityBackupModal}
+      <SecurityBackupModal
+        isOpen={isSecurityModalOpen}
+        workspaces={allWorkspaces}
+        {activeWorkspace}
+        onDataRestored={refreshData}
+        onLockAppNow={() => {
+          setSessionUnlocked(false);
+          isAppLocked = true;
+        }}
+        onPinStateChange={(enabled) => {
+          isPinEnabled = enabled;
+        }}
+        onClose={() => (isSecurityModalOpen = false)}
+      />
+    {/if}
 
     <!-- Modal Pengaturan Sinkronisasi Cloud (Supabase Delta Sync) -->
-    {#if isSyncModalOpen}
+    {#if isSyncModalOpen && SyncSettingsModal}
       <SyncSettingsModal
         isOpen={isSyncModalOpen}
         workspaces={allWorkspaces}
