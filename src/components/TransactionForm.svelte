@@ -11,6 +11,7 @@
   } from "../lib/utils.js";
   import { KOPDES_UNITS } from "../lib/db.js";
   import { compressReceiptImage } from "../lib/utils/imageCompressor.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -25,6 +26,14 @@
     onOpenVoice,
     onOpenReceiptScanner,
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("transaction-form", () => {
+        onClose?.();
+      });
+    }
+  });
 
   let workspace_id = $state("personal");
   let type = $state("expense");

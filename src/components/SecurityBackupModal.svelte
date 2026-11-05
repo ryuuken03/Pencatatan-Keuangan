@@ -15,6 +15,7 @@
   } from "../lib/utils/cryptoBackup.js";
   import { downloadBlobFile } from "../lib/utils/csvExporter.js";
   import { getWorkspaceTheme } from "../lib/utils.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -25,6 +26,14 @@
     onPinStateChange,
     onClose,
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("security-backup", () => {
+        onClose?.();
+      });
+    }
+  });
 
   let activeSection = $state("backup"); // 'backup' | 'restore' | 'security'
   let dbStats = $state({

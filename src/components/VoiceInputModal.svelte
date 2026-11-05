@@ -7,6 +7,7 @@
     getWorkspaceTheme,
     getWorkspaceType
   } from "../lib/utils.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -18,6 +19,14 @@
     onApply,
     onClose,
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("voice-input", () => {
+        onClose?.();
+      });
+    }
+  });
 
   let transcript = $state("");
   let interimTranscript = $state("");

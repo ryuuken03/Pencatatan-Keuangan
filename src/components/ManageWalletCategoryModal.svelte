@@ -7,6 +7,7 @@
     getWorkspaceTheme,
     getWorkspaceType
   } from "../lib/utils.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -24,6 +25,14 @@
   } = $props();
 
   let activeTab = $state("accounts");
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("manage-wallet-category", () => {
+        onClose?.();
+      });
+    }
+  });
 
   $effect(() => {
     if (isOpen) {

@@ -13,6 +13,7 @@
     downloadImportTemplateXLSX,
     parseTransactionsFromXlsxBuffer,
   } from "../lib/utils/xlsxEngine.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -27,6 +28,14 @@
     onDataImported,
     onClose,
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("report-export", () => {
+        onClose?.();
+      });
+    }
+  });
 
   let activeTab = $state("category"); // 'category' | 'unit' | 'reimburse' | 'import_xlsx'
   let periodPreset = $state("this_month"); // 'all' | 'today' | 'this_week' | 'this_month' | 'last_month' | 'this_year' | 'custom'

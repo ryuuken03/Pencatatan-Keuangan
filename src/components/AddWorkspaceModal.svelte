@@ -1,9 +1,19 @@
 <script>
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
+
   let {
     isOpen = false,
     onCreateWorkspace,
     onClose
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("add-workspace", () => {
+        handleClose();
+      });
+    }
+  });
 
   let wsType = $state('business'); // 'business' | 'pekerjaan'
   let wsName = $state('');

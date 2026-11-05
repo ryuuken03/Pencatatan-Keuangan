@@ -5,6 +5,7 @@
     formatDateShort,
     getWorkspaceTheme
   } from "../lib/utils.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -18,26 +19,40 @@
     onClose,
   } = $props();
 
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("receipt-preview", () => {
+        onClose?.();
+      });
+    }
+  });
+
   let blobUrl = $state("");
   let blobSizeKB = $state(0);
 
   $effect(() => {
     if (isOpen && transaction?.attachment_blob) {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
       const blob = transaction.attachment_blob;
-      blobUrl = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
+      blobUrl = url;
       blobSizeKB = Math.round(((blob.size || 0) / 1024) * 10) / 10;
-    } else {
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
+
+      return () => {
+        URL.revokeObjectURL(url);
         blobUrl = "";
-      }
+        blobSizeKB = 0;
+      };
+    } else {
+      blobUrl = "";
       blobSizeKB = 0;
     }
   });
 
   onDestroy(() => {
-    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl);
+      blobUrl = "";
+    }
   });
 
   let effectiveWorkspaces = $derived(

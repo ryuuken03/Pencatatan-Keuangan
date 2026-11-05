@@ -19,6 +19,7 @@
     getWorkspaceTheme,
     getWorkspaceType
   } from "../lib/utils.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -31,6 +32,14 @@
     onSave,
     onClose,
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("receipt-scanner", () => {
+        onClose?.();
+      });
+    }
+  });
 
   let selectedFile = $state(null);
   let compressedResult = $state(null);

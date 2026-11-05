@@ -6,6 +6,7 @@
     getWorkspaceType,
   } from "../lib/utils.js";
   import AddWorkspaceModal from "./AddWorkspaceModal.svelte";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     workspaces = [],
@@ -41,6 +42,14 @@
 
   let isWalletDetailOpen = $state(false);
   let isAddWsModalOpen = $state(false);
+
+  $effect(() => {
+    if (isWalletDetailOpen) {
+      return registerModalHistory("wallet-detail", () => {
+        isWalletDetailOpen = false;
+      });
+    }
+  });
 
   function getAccountTypeLabel(type) {
     if (type === "bank") return "Rekening Bank";

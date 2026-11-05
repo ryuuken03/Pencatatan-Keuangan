@@ -3,6 +3,7 @@
   import { supabaseAdapter } from "../lib/sync/supabaseAdapter.js";
   import { syncEngine } from "../lib/sync/syncEngine.js";
   import { getWorkspaceTheme } from "../lib/utils.js";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     isOpen = false,
@@ -11,6 +12,14 @@
     onClose,
     onDataSynced,
   } = $props();
+
+  $effect(() => {
+    if (isOpen) {
+      return registerModalHistory("sync-settings", () => {
+        onClose?.();
+      });
+    }
+  });
 
   let syncState = $state({
     isSyncing: false,

@@ -6,6 +6,7 @@
     getWorkspaceType,
   } from "../lib/utils.js";
   import AddWorkspaceModal from "./AddWorkspaceModal.svelte";
+  import { registerModalHistory } from "../lib/utils/modalHistory.js";
 
   let {
     workspaces = [],
@@ -39,6 +40,14 @@
   function closeSheet() {
     activeSheet = null;
   }
+
+  $effect(() => {
+    if (activeSheet) {
+      return registerModalHistory("mobile-bottom-sheet", () => {
+        closeSheet();
+      });
+    }
+  });
 
   let effectiveWorkspaces = $derived(
     workspaces && workspaces.length > 0
