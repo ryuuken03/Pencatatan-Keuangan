@@ -55,6 +55,10 @@
     getWorkspaceTheme(activeWorkspace, effectiveWorkspaces),
   );
 
+  let currentWsName = $derived(
+    currentWs?.name || getWorkspaceName(activeWorkspace, effectiveWorkspaces),
+  );
+
   let primaryBtnCls = $derived(currentTheme.primaryBtn);
   let sheetHeaderBg = $derived(currentTheme.heroBg);
 
@@ -152,7 +156,7 @@
                     ? 'text-white/80'
                     : 'text-slate-500'}"
                 >
-                  {getWorkspaceDescription(wsType)}
+                  <!-- {getWorkspaceDescription(wsType)} -->
                 </p>
               </div>
 
@@ -692,13 +696,13 @@
         />
       </svg>
       <span
-        class="w-2 h-2 rounded-full ring-2 ring-white absolute -top-0.5 -right-1.5 {currentWs.dotCls}"
+        class="w-2 h-2 rounded-full ring-2 ring-white absolute -top-0.5 -right-1.5 {currentTheme.dotCls}"
       ></span>
     </div>
     <span
       class="text-[10px] font-bold leading-tight tracking-tight truncate max-w-full"
     >
-      {currentWs.shortName}
+      {currentWsName}
     </span>
   </button>
 
