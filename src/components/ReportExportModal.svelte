@@ -1,5 +1,11 @@
 <script>
-  import { formatIDR, formatDateShort } from "../lib/utils.js";
+  import {
+    formatIDR,
+    formatDateShort,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
+  } from "../lib/utils.js";
   import { KOPDES_UNITS, importTransactionsFromXlsxRows } from "../lib/db.js";
   import {
     exportTransactionsToXLSX,
@@ -10,6 +16,7 @@
 
   let {
     isOpen = false,
+    workspaces = [],
     activeWorkspace = "personal",
     transactions = [],
     allTransactions = [],
@@ -128,7 +135,7 @@
     transactions.filter((tx) => {
       if (!isWithinDateRange(tx.date, dateRange.from, dateRange.to))
         return false;
-      if (activeWorkspace === "kopdes" && selectedUnit !== "all") {
+      if (isPekerjaan && selectedUnit !== "all") {
         const txUnit = tx.metadata?.unit_usaha || "Tanpa Unit Spesifik";
         if (txUnit !== selectedUnit) return false;
       }
@@ -267,7 +274,7 @@
     }
 
     return Array.from(map.values()).filter(
-      (u) => u.count > 0 || activeWorkspace === "kopdes",
+      (u) => u.count > 0 || isPekerjaan,
     );
   });
 
@@ -302,25 +309,28 @@
     };
   });
 
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
+  let currentWsType = $derived(
+    getWorkspaceType(activeWorkspace, effectiveWorkspaces)
+  );
+
+  let isPekerjaan = $derived(
+    currentWsType === "pekerjaan" ||
+      activeWorkspace === "kopdes" ||
+      activeWorkspace === "pekerjaan"
+  );
+
   let theme = $derived.by(() => {
-    if (activeWorkspace === "business") {
-      return {
-        headerBg: "bg-teal-900",
-        activeBtn: "bg-teal-900 text-white border-teal-900",
-        badge: "BUKU KAS USAHA",
-      };
-    }
-    if (activeWorkspace === "kopdes") {
-      return {
-        headerBg: "bg-emerald-900",
-        activeBtn: "bg-emerald-900 text-white border-emerald-900",
-        badge: "MANAGER KOPDES",
-      };
-    }
+    const wsTheme = getWorkspaceTheme(activeWorkspace, effectiveWorkspaces);
     return {
-      headerBg: "bg-indigo-950",
-      activeBtn: "bg-indigo-950 text-white border-indigo-950",
-      badge: "BUKU KAS PRIBADI",
+      headerBg: wsTheme.heroBg,
+      activeBtn: `${wsTheme.heroBg} text-white ${wsTheme.heroBorder}`,
+      badge: wsTheme.badgeText,
     };
   });
 
@@ -485,14 +495,14 @@
               {/each}
             </div>
 
-            <!-- Filter Unit Usaha (Jika di Kopdes) -->
-            {#if activeWorkspace === "kopdes"}
+            <!-- Filter Unit Usaha / Kerja -->
+            {#if isPekerjaan}
               <select
                 bind:value={selectedUnit}
-                aria-label="Filter Unit Usaha Laporan"
+                aria-label="Filter Unit Kerja Laporan"
                 class="px-2.5 py-1 text-[11px] font-bold bg-white text-slate-700 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 cursor-pointer"
               >
-                <option value="all">Semua Unit Usaha</option>
+                <option value="all">Semua Unit Kerja</option>
                 {#each KOPDES_UNITS as u}
                   <option value={u}>{u}</option>
                 {/each}
@@ -546,7 +556,7 @@
                 ? 'bg-white text-slate-900 shadow-2xs'
                 : 'text-slate-600 hover:text-slate-900'}"
             >
-              Rekap Unit Kopdes
+              Rekap Unit & Divisi
             </button>
             <button
               type="button"
@@ -859,7 +869,7 @@
             </div>
           </div>
 
-          <!-- TAB 2: REKAP PER UNIT USAHA KOPDES -->
+          <!-- TAB 2: REKAP PER UNIT USAHA / DIVISI -->
         {:else if activeTab === "unit"}
           <div
             class="border border-slate-200 rounded-2xl overflow-hidden bg-white"
@@ -871,7 +881,7 @@
                 <h3
                   class="text-xs font-extrabold uppercase tracking-wider text-slate-800"
                 >
-                  Rekapitulasi Arus Kas per Unit Usaha Kopdes
+                  Rekapitulasi Arus Kas per Unit / Divisi
                 </h3>
                 <p class="text-[11px] text-slate-500 mt-0.5">
                   Ringkasan pertanggungjawaban pemasukan, pengeluaran, dan
@@ -882,7 +892,7 @@
 
             {#if unitRecap.length === 0}
               <div class="p-8 text-center text-slate-400">
-                Belum ada transaksi dengan atribut Unit Usaha pada periode ini.
+                Belum ada transaksi dengan atribut Unit / Divisi pada periode ini.
               </div>
             {:else}
               <div class="overflow-x-auto">
@@ -891,7 +901,7 @@
                     <tr
                       class="bg-slate-50 border-b border-slate-200 text-[11px] font-extrabold uppercase text-slate-500"
                     >
-                      <th class="py-2.5 px-4">Unit Usaha Kopdes</th>
+                      <th class="py-2.5 px-4">Unit / Divisi</th>
                       <th class="py-2.5 px-4 text-center">Jml Transaksi</th>
                       <th class="py-2.5 px-4 text-right">Pemasukan (Rp)</th>
                       <th class="py-2.5 px-4 text-right">Pengeluaran (Rp)</th>

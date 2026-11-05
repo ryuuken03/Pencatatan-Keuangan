@@ -202,3 +202,72 @@ export function toDatetimeLocal(isoString) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * Deteksi tipe buku kas ('personal' | 'business' | 'pekerjaan')
+ */
+export function getWorkspaceType(workspaceId, workspaces = []) {
+  if (workspaceId === 'personal') return 'personal';
+  if (workspaceId === 'business') return 'business';
+  if (workspaceId === 'kopdes' || workspaceId === 'pekerjaan') return 'pekerjaan';
+  const found = workspaces.find((w) => w.id === workspaceId);
+  if (found?.type) return found.type;
+  return 'personal';
+}
+
+/**
+ * Ambil nama resmi Buku Kas
+ */
+export function getWorkspaceName(workspaceId, workspaces = []) {
+  const found = workspaces.find((w) => w.id === workspaceId);
+  if (found?.name) return found.name;
+  if (workspaceId === 'personal') return 'Buku Pribadi';
+  if (workspaceId === 'business') return 'Buku Usaha';
+  if (workspaceId === 'kopdes' || workspaceId === 'pekerjaan') return 'Buku Pekerjaan';
+  return 'Buku Kas';
+}
+
+/**
+ * Tema visual Solid Flat Color (Anti AI-Slop) per Buku Kas
+ */
+export function getWorkspaceTheme(workspaceId, workspaces = []) {
+  const type = getWorkspaceType(workspaceId, workspaces);
+  if (type === 'business') {
+    return {
+      type: 'business',
+      heroBg: 'bg-teal-900',
+      heroBorder: 'border-teal-800',
+      badgeBg: 'bg-teal-800 text-teal-100 border-teal-700',
+      badgeText: 'BUKU KAS USAHA',
+      primaryBtn: 'bg-teal-900 hover:bg-teal-800 text-white shadow-2xs',
+      walletAccent: 'border-l-teal-600',
+      dotCls: 'bg-teal-400',
+      activeTabCls: 'bg-teal-900 text-white shadow-sm'
+    };
+  }
+  if (type === 'pekerjaan') {
+    return {
+      type: 'pekerjaan',
+      heroBg: 'bg-emerald-900',
+      heroBorder: 'border-emerald-800',
+      badgeBg: 'bg-emerald-800 text-emerald-100 border-emerald-700',
+      badgeText: 'BUKU KAS PEKERJAAN',
+      primaryBtn: 'bg-emerald-900 hover:bg-emerald-800 text-white shadow-2xs',
+      walletAccent: 'border-l-emerald-600',
+      dotCls: 'bg-emerald-400',
+      activeTabCls: 'bg-emerald-900 text-white shadow-sm'
+    };
+  }
+  return {
+    type: 'personal',
+    heroBg: 'bg-indigo-950',
+    heroBorder: 'border-indigo-900',
+    badgeBg: 'bg-indigo-900 text-indigo-100 border-indigo-800',
+    badgeText: 'BUKU KAS PRIBADI',
+    primaryBtn: 'bg-indigo-950 hover:bg-indigo-900 text-white shadow-2xs',
+    walletAccent: 'border-l-indigo-600',
+    dotCls: 'bg-indigo-400',
+    activeTabCls: 'bg-indigo-950 text-white shadow-sm'
+  };
+}
+
+

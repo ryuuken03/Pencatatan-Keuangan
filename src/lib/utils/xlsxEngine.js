@@ -643,14 +643,23 @@ export async function readXlsxWorkbook(arrayBuffer) {
    ========================================================================== */
 
 function getWorkspaceLabel(wsId) {
-  if (wsId === 'kopdes') return 'Manager Kopdes';
+  if (wsId === 'pekerjaan' || wsId === 'kopdes') return 'Buku Pekerjaan';
   if (wsId === 'business') return 'Buku Usaha';
   return 'Buku Pribadi';
 }
 
 function parseWorkspaceLabel(val, fallback = 'personal') {
   const s = String(val || '').toLowerCase().trim();
-  if (s.includes('kopdes') || s.includes('koperasi')) return 'kopdes';
+  if (
+    s.includes('pekerjaan') ||
+    s.includes('kerja') ||
+    s.includes('kantor') ||
+    s.includes('dinas') ||
+    s.includes('kopdes') ||
+    s.includes('koperasi')
+  ) {
+    return fallback === 'kopdes' ? 'kopdes' : 'pekerjaan';
+  }
   if (s.includes('usaha') || s.includes('business') || s.includes('bisnis')) return 'business';
   if (s.includes('pribadi') || s.includes('personal')) return 'personal';
   return fallback;

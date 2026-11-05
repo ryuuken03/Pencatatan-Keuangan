@@ -14,9 +14,11 @@
     disablePinLock,
   } from "../lib/utils/cryptoBackup.js";
   import { downloadBlobFile } from "../lib/utils/csvExporter.js";
+  import { getWorkspaceTheme } from "../lib/utils.js";
 
   let {
     isOpen = false,
+    workspaces = [],
     activeWorkspace = "personal",
     onDataRestored,
     onLockAppNow,
@@ -75,24 +77,15 @@
     }
   });
 
-  let theme = $derived.by(() => {
-    if (activeWorkspace === "business") {
-      return {
-        headerBg: "bg-teal-900",
-        primaryBtn: "bg-teal-900 hover:bg-teal-800 text-white",
-      };
-    }
-    if (activeWorkspace === "kopdes") {
-      return {
-        headerBg: "bg-emerald-900",
-        primaryBtn: "bg-emerald-900 hover:bg-emerald-800 text-white",
-      };
-    }
-    return {
-      headerBg: "bg-indigo-950",
-      primaryBtn: "bg-indigo-950 hover:bg-indigo-900 text-white",
-    };
-  });
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
+  let theme = $derived(
+    getWorkspaceTheme(activeWorkspace, effectiveWorkspaces)
+  );
 
   async function handleExportBackup() {
     statusMsg = "";
@@ -453,7 +446,7 @@
                 Ekspor Cadangan Database Lengkap (.json)
               </h3>
               <p class="text-[11px] text-slate-500 mt-0.5">
-                Mencadangkan seluruh buku kas (Pribadi, Usaha, Kopdes), dompet,
+                Mencadangkan seluruh buku kas (Pribadi, Usaha, Pekerjaan), dompet,
                 kategori, transaksi, dan rincian produk.
               </p>
             </div>

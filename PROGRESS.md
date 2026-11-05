@@ -23,8 +23,8 @@ Proyek ini telah dilengkapi dengan **Workspace Rules Otomatis** di [`GEMINI.md`]
 - [x] Perancangan Arsitektur & Pemilihan Tech Stack (`Svelte 5 + Vite + Tailwind CSS + Dexie.js`)
 - [x] Pembuatan Dokumen Spesifikasi [PRD.md](./PRD.md) & Rules Permanen [GEMINI.md](./GEMINI.md)
 - [x] Pembuatan Dokumen Tracker & Prompt [PROGRESS.md](./PROGRESS.md)
-- [x] **Modul 1A:** Pondasi Project, Database Dexie.js, Multi-Workspace (`Pribadi`, `Usaha`, `Kopdes`), Form CRUD Utama & Reimburse
-- [x] **Modul 1B:** Smart Input (Voice-to-Text Parser Bahasa Indonesia & Kamera Kompresi WebP + OCR Struk)
+- [x] **Modul 1A:** Pondasi Project, Database Dexie.js, Dynamic Multi-Workspace (`Buku Pribadi` default tunggal, penambahan manual `Buku Usaha` & `Buku Pekerjaan` dengan nama kustom), Form CRUD Utama & Reimburse
+- [x] **Modul 1B:** Smart Input (Voice-to-Text Parser Bahasa Indonesia & Kamera Kompresi WebP + OCR Struk Mandiri Self-Learning Typo Bigram Matcher & Editor Instan)
 - [x] **Modul 1C:** Laporan Rekapitulasi, Export & Import Excel (`.xlsx`), Backup JSON Terenkripsi (WebCrypto `AES-GCM 256-bit`), PIN Lock 6 Digit, Mobile Bottom Navbar & PWA Offline Manifest
 - [x] **Fase 2:** Integrasi Sinkronisasi Database Online (Supabase Delta Sync & RLS)
 - [ ] **Fase 3:** Backend API Go (Golang) untuk Home Server (Intel Celeron, RAM 4GB, SSD 128GB)

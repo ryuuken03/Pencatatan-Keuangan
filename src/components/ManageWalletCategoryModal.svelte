@@ -3,11 +3,15 @@
     formatIDR,
     formatNumber,
     evaluateNominalExpression,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
   } from "../lib/utils.js";
 
   let {
     isOpen = false,
     initialTab = "accounts",
+    workspaces = [],
     activeWorkspace = "personal",
     accounts = [],
     categories = [],
@@ -37,29 +41,22 @@
   let catType = $state("expense");
   let catKeywords = $state("");
 
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
   const workspaceLabel = $derived(
-    activeWorkspace === "personal"
-      ? "Buku Pribadi"
-      : activeWorkspace === "business"
-        ? "Buku Usaha"
-        : "Manager Kopdes",
+    getWorkspaceName(activeWorkspace, effectiveWorkspaces)
   );
 
-  const headerBgCls = $derived(
-    activeWorkspace === "business"
-      ? "bg-teal-900"
-      : activeWorkspace === "kopdes"
-        ? "bg-emerald-900"
-        : "bg-indigo-950",
+  const currentWsTheme = $derived(
+    getWorkspaceTheme(activeWorkspace, effectiveWorkspaces)
   );
 
-  const primaryBtnCls = $derived(
-    activeWorkspace === "business"
-      ? "bg-teal-900 hover:bg-teal-800 text-white"
-      : activeWorkspace === "kopdes"
-        ? "bg-emerald-900 hover:bg-emerald-800 text-white"
-        : "bg-indigo-950 hover:bg-indigo-900 text-white",
-  );
+  const headerBgCls = $derived(currentWsTheme.heroBg);
+  const primaryBtnCls = $derived(currentWsTheme.primaryBtn);
 
   function resetAccForm() {
     editingAccId = null;

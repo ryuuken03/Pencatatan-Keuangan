@@ -157,6 +157,23 @@ export function seedCategoryId(c) {
 export async function seedDatabase() {
   const wsCount = await db.workspaces.count();
   if (wsCount > 0) {
+    // Pastikan type dan label terkini ada pada tiap workspace yang sudah ada
+    const existingWorkspaces = await db.workspaces.toArray();
+    for (const ws of existingWorkspaces) {
+      const updates = {};
+      if (!ws.type) {
+        if (ws.id === 'business') updates.type = 'business';
+        else if (ws.id === 'kopdes' || ws.id === 'pekerjaan') updates.type = 'pekerjaan';
+        else updates.type = 'personal';
+      }
+      if (ws.id === 'personal' && ws.name === 'Pribadi') updates.name = 'Buku Pribadi';
+      if (ws.id === 'business' && ws.name === 'Usaha') updates.name = 'Buku Usaha';
+      if (ws.id === 'kopdes' && (ws.name === 'Kopdes' || ws.name === 'Manager Kopdes')) updates.name = 'Buku Pekerjaan';
+      if (Object.keys(updates).length > 0) {
+        await db.workspaces.update(ws.id, updates);
+      }
+    }
+
     // Pastikan dompet seed default yang belum pernah diubah user bersaldo awal 0
     const existingAccounts = await db.accounts.toArray();
     for (const acc of existingAccounts) {
@@ -196,40 +213,51 @@ export async function seedDatabase() {
   }
 
   await db.transaction('rw', db.workspaces, db.accounts, db.categories, async () => {
-    // 1. Seed Workspaces
+    // 1. Seed Workspaces: HANYA Buku Pribadi saat pertama kali dibuka
     await db.workspaces.bulkPut([
-      { id: 'personal', name: 'Pribadi', currency: 'IDR' },
-      { id: 'business', name: 'Usaha', currency: 'IDR' },
-      { id: 'kopdes', name: 'Kopdes', currency: 'IDR' }
+      {
+        id: 'personal',
+        name: 'Buku Pribadi',
+        type: 'personal',
+        currency: 'IDR',
+        created_at: SEED_EPOCH_ISO,
+        updated_at: SEED_EPOCH_ISO,
+        deleted_at: null,
+        sync_status: 'pending'
+      }
     ]);
 
-    // 2. Seed Accounts (ID deterministik)
-    const accounts = DEFAULT_ACCOUNTS.map((a) => ({
-      id: seedAccountId(a),
-      workspace_id: a.workspace_id,
-      name: a.name,
-      type: a.type,
-      initial_balance: a.initial_balance,
-      created_at: SEED_EPOCH_ISO,
-      updated_at: SEED_EPOCH_ISO,
-      deleted_at: null,
-      sync_status: 'pending'
-    }));
-    await db.accounts.bulkPut(accounts);
+    // 2. Seed Accounts: HANYA dompet bawaan Buku Pribadi
+    const personalAccounts = DEFAULT_ACCOUNTS
+      .filter((a) => a.workspace_id === 'personal')
+      .map((a) => ({
+        id: seedAccountId(a),
+        workspace_id: a.workspace_id,
+        name: a.name,
+        type: a.type,
+        initial_balance: a.initial_balance,
+        created_at: SEED_EPOCH_ISO,
+        updated_at: SEED_EPOCH_ISO,
+        deleted_at: null,
+        sync_status: 'pending'
+      }));
+    await db.accounts.bulkPut(personalAccounts);
 
-    // 3. Seed Categories (ID deterministik)
-    const categories = DEFAULT_CATEGORIES.map((c) => ({
-      id: seedCategoryId(c),
-      workspace_id: c.workspace_id,
-      name: c.name,
-      type: c.type,
-      created_at: SEED_EPOCH_ISO,
-      updated_at: SEED_EPOCH_ISO,
-      deleted_at: null,
-      sync_status: 'pending'
-    }));
+    // 3. Seed Categories: HANYA kategori bawaan Buku Pribadi
+    const personalCategories = DEFAULT_CATEGORIES
+      .filter((c) => c.workspace_id === 'personal')
+      .map((c) => ({
+        id: seedCategoryId(c),
+        workspace_id: c.workspace_id,
+        name: c.name,
+        type: c.type,
+        created_at: SEED_EPOCH_ISO,
+        updated_at: SEED_EPOCH_ISO,
+        deleted_at: null,
+        sync_status: 'pending'
+      }));
 
-    await db.categories.bulkPut(categories);
+    await db.categories.bulkPut(personalCategories);
   });
 }
 
@@ -391,13 +419,23 @@ export async function dedupeAccountsAndCategories() {
  * Helper ambil semua data aktif (deleted_at === null) beserta relasi opsional `transaction_items`
  */
 export async function loadAppData() {
-  const [workspaces, allAccounts, allCategories, allTransactions, allTxItems] = await Promise.all([
-    db.workspaces.toArray(),
+  const [rawWorkspaces, allAccounts, allCategories, allTransactions, allTxItems] = await Promise.all([
+    db.workspaces.filter((w) => !w.deleted_at).toArray(),
     db.accounts.filter((a) => !a.deleted_at).toArray(),
     db.categories.filter((c) => !c.deleted_at).toArray(),
     db.transactions.filter((t) => !t.deleted_at).toArray(),
     db.transaction_items.filter((it) => !it.deleted_at).toArray()
   ]);
+
+  const workspaces = rawWorkspaces.map((w) => {
+    let type = w.type;
+    if (!type) {
+      if (w.id === 'business') type = 'business';
+      else if (w.id === 'kopdes' || w.id === 'pekerjaan') type = 'pekerjaan';
+      else type = 'personal';
+    }
+    return { ...w, type };
+  });
 
   // Kelompokkan item produk berdasarkan transaction_id
   allTxItems.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -700,6 +738,146 @@ export async function softDeleteCategory(id) {
     sync_status: 'pending'
   });
 }
+
+/**
+ * CRUD Buku Kas (Workspace)
+ */
+export async function createWorkspace({ name, type }) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) throw new Error('Nama buku kas wajib diisi.');
+
+  const validTypes = ['business', 'pekerjaan'];
+  const wsType = validTypes.includes(type) ? type : 'business';
+
+  // ID unik: jika belum ada id 'business' atau 'pekerjaan', pakai id tersebut, jika sudah ada pakai prefix-uuidv7
+  const existing = await db.workspaces.toArray();
+  let newId = wsType;
+  if (existing.some((w) => w.id === newId)) {
+    newId = `${wsType}-${uuidv7()}`;
+  }
+
+  const now = new Date().toISOString();
+  const workspaceRecord = {
+    id: newId,
+    name: trimmedName,
+    type: wsType,
+    currency: 'IDR',
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+    sync_status: 'pending'
+  };
+
+  const accountsToCreate = [];
+  const categoriesToCreate = [];
+
+  if (wsType === 'business') {
+    accountsToCreate.push(
+      { workspace_id: newId, name: `Kas Tunai ${trimmedName}`, type: 'cash', initial_balance: 0 },
+      { workspace_id: newId, name: `Rekening Usaha ${trimmedName}`, type: 'bank', initial_balance: 0 }
+    );
+
+    categoriesToCreate.push(
+      { workspace_id: newId, name: 'Omzet Penjualan', type: 'income' },
+      { workspace_id: newId, name: 'Suntikan Modal', type: 'income' },
+      { workspace_id: newId, name: 'Pelunasan Piutang Pelanggan', type: 'income' },
+      { workspace_id: newId, name: 'Pemasukan Usaha Lainnya', type: 'income' },
+      { workspace_id: newId, name: 'HPP / Pembelian Bahan', type: 'expense' },
+      { workspace_id: newId, name: 'Operasional & Listrik Usaha', type: 'expense' },
+      { workspace_id: newId, name: 'Upah Karyawan / Tenaga', type: 'expense' },
+      { workspace_id: newId, name: 'Pemasaran & Distribusi', type: 'expense' },
+      { workspace_id: newId, name: 'Pengeluaran Usaha Lainnya', type: 'expense' }
+    );
+  } else {
+    accountsToCreate.push(
+      { workspace_id: newId, name: 'Kas Operasional', type: 'cash', initial_balance: 0 },
+      { workspace_id: newId, name: 'Rekening Kantor / Dinas', type: 'bank', initial_balance: 0 }
+    );
+
+    categoriesToCreate.push(
+      { workspace_id: newId, name: 'Gaji & Honor Proyek', type: 'income' },
+      { workspace_id: newId, name: 'Pencairan Dana Talangan / Reimburse', type: 'income' },
+      { workspace_id: newId, name: 'Anggaran Operasional Masuk', type: 'income' },
+      { workspace_id: newId, name: 'Pemasukan Pekerjaan Lainnya', type: 'income' },
+      { workspace_id: newId, name: 'Operasional Kantor & Lapangan', type: 'expense' },
+      { workspace_id: newId, name: 'Belanja Kebutuhan Kerja', type: 'expense' },
+      { workspace_id: newId, name: 'Transportasi & Perjalanan Dinas', type: 'expense' },
+      { workspace_id: newId, name: 'ATK & Konsumsi Rapat', type: 'expense' },
+      { workspace_id: newId, name: 'Pengeluaran Pekerjaan Lainnya', type: 'expense' }
+    );
+  }
+
+  await db.transaction('rw', db.workspaces, db.accounts, db.categories, async () => {
+    await db.workspaces.put(workspaceRecord);
+
+    for (const acc of accountsToCreate) {
+      await db.accounts.put({
+        id: uuidv7(),
+        workspace_id: acc.workspace_id,
+        name: acc.name,
+        type: acc.type,
+        initial_balance: acc.initial_balance || 0,
+        created_at: now,
+        updated_at: now,
+        deleted_at: null,
+        sync_status: 'pending'
+      });
+    }
+
+    for (const cat of categoriesToCreate) {
+      await db.categories.put({
+        id: uuidv7(),
+        workspace_id: cat.workspace_id,
+        name: cat.name,
+        type: cat.type,
+        created_at: now,
+        updated_at: now,
+        deleted_at: null,
+        sync_status: 'pending'
+      });
+    }
+  });
+
+  return workspaceRecord;
+}
+
+export async function updateWorkspace(id, { name }) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) throw new Error('Nama buku kas tidak boleh kosong.');
+  const now = new Date().toISOString();
+  await db.workspaces.update(id, {
+    name: trimmed,
+    updated_at: now,
+    sync_status: 'pending'
+  });
+}
+
+export async function deleteWorkspace(id) {
+  if (id === 'personal') {
+    throw new Error('Buku Pribadi adalah buku kas utama dan tidak dapat dihapus.');
+  }
+  const now = new Date().toISOString();
+  await db.transaction('rw', db.workspaces, db.accounts, db.categories, db.transactions, async () => {
+    await db.workspaces.update(id, {
+      deleted_at: now,
+      updated_at: now,
+      sync_status: 'pending'
+    });
+    const accs = await db.accounts.where('workspace_id').equals(id).toArray();
+    for (const a of accs) {
+      await db.accounts.update(a.id, { deleted_at: now, updated_at: now, sync_status: 'pending' });
+    }
+    const cats = await db.categories.where('workspace_id').equals(id).toArray();
+    for (const c of cats) {
+      await db.categories.update(c.id, { deleted_at: now, updated_at: now, sync_status: 'pending' });
+    }
+    const txs = await db.transactions.where('workspace_id').equals(id).toArray();
+    for (const t of txs) {
+      await db.transactions.update(t.id, { deleted_at: now, updated_at: now, sync_status: 'pending' });
+    }
+  });
+}
+
 
 /**
  * Rekam atau perbarui alias typo OCR -> Nama Barang Resmi (Kamus Mandiri OCR)

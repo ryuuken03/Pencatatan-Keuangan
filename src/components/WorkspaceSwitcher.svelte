@@ -1,9 +1,19 @@
 <script>
-  import { formatIDR } from "../lib/utils.js";
+  import {
+    formatIDR,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType,
+  } from "../lib/utils.js";
+  import AddWorkspaceModal from "./AddWorkspaceModal.svelte";
 
   let {
+    workspaces = [],
     activeWorkspace = "personal",
     onSelectWorkspace,
+    onCreateWorkspace,
+    onUpdateWorkspace,
+    onDeleteWorkspace,
     accounts = [],
     accountBalances = {},
     summary = {
@@ -30,6 +40,7 @@
   } = $props();
 
   let isWalletDetailOpen = $state(false);
+  let isAddWsModalOpen = $state(false);
 
   function getAccountTypeLabel(type) {
     if (type === "bank") return "Rekening Bank";
@@ -37,61 +48,15 @@
     return "Kas Tunai";
   }
 
-  const workspaceTabs = [
-    {
-      id: "personal",
-      label: "Buku Pribadi",
-      shortLabel: "Pribadi",
-      activeTabCls: "bg-indigo-950 text-white shadow-sm",
-      dotCls: "bg-indigo-400",
-    },
-    {
-      id: "business",
-      label: "Buku Usaha",
-      shortLabel: "Usaha",
-      activeTabCls: "bg-teal-900 text-white shadow-sm",
-      dotCls: "bg-teal-400",
-    },
-    {
-      id: "kopdes",
-      label: "Manager Kopdes",
-      shortLabel: "Kopdes",
-      activeTabCls: "bg-emerald-900 text-white shadow-sm",
-      dotCls: "bg-emerald-400",
-    },
-  ];
+  // Daftar workspace aktif (minimal Buku Pribadi selalu tersedia)
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }],
+  );
 
   // Tema visual dinamis per Buku Kas (Solid Flat Color, Tanpa Gradient)
-  let theme = $derived.by(() => {
-    if (activeWorkspace === "business") {
-      return {
-        heroBg: "bg-teal-900",
-        heroBorder: "border-teal-800",
-        badgeBg: "bg-teal-800 text-teal-100 border-teal-700",
-        badgeText: "BUKU KAS USAHA",
-        primaryBtn: "bg-teal-800 hover:bg-teal-700 text-white shadow-sm",
-        walletAccent: "border-l-teal-600",
-      };
-    }
-    if (activeWorkspace === "kopdes") {
-      return {
-        heroBg: "bg-emerald-900",
-        heroBorder: "border-emerald-800",
-        badgeBg: "bg-emerald-800 text-emerald-100 border-emerald-700",
-        badgeText: "BUKU KAS MANAGER KOPDES",
-        primaryBtn: "bg-emerald-800 hover:bg-emerald-700 text-white shadow-sm",
-        walletAccent: "border-l-emerald-600",
-      };
-    }
-    return {
-      heroBg: "bg-indigo-950",
-      heroBorder: "border-indigo-900",
-      badgeBg: "bg-indigo-900 text-indigo-100 border-indigo-800",
-      badgeText: "BUKU KAS PRIBADI",
-      primaryBtn: "bg-indigo-950 hover:bg-indigo-900 text-white shadow-sm",
-      walletAccent: "border-l-indigo-600",
-    };
-  });
+  let theme = $derived(getWorkspaceTheme(activeWorkspace, effectiveWorkspaces));
 </script>
 
 <header
@@ -128,11 +93,7 @@
             </span>
             <span class="text-slate-300">•</span> -->
             <span class="text-[11px] font-bold text-slate-600 truncate">
-              {activeWorkspace === "business"
-                ? "Buku Usaha"
-                : activeWorkspace === "kopdes"
-                  ? "Manager Kopdes"
-                  : "Buku Pribadi"}
+              {getWorkspaceName(activeWorkspace, effectiveWorkspaces)}
             </span>
           </div>
         </div>
@@ -145,19 +106,19 @@
             onclick={onOpenSyncModal}
             class="p-1.5 rounded-lg border cursor-pointer relative {syncState.isSyncing
               ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-              : syncState.totalPending > 0
-                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                : syncState.isAuthenticated
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-slate-50 text-slate-500 border-slate-200'}"
+              : !syncState.isAuthenticated
+                ? 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                : syncState.totalPending > 0
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'}"
             title={syncState.isSyncing
               ? "Sedang Sinkronisasi..."
-              : syncState.totalPending > 0
-                ? `${syncState.totalPending} data pending sync`
-                : syncState.isAuthenticated
-                  ? "Cloud Sync Aktif"
-                  : "Pengaturan Cloud Sync"}
-            aria-label="Status Cloud Sync"
+              : !syncState.isAuthenticated
+                ? "Hubungkan Cloud"
+                : syncState.totalPending > 0
+                  ? `${syncState.totalPending} data pending sync`
+                  : "Sinkronisasi Aktif"}
+            aria-label="Status Sinkron"
           >
             {#if syncState.isSyncing}
               <svg
@@ -184,7 +145,7 @@
                 />
               </svg>
             {/if}
-            {#if syncState.totalPending > 0}
+            {#if syncState.isAuthenticated && syncState.totalPending > 0}
               <span
                 class="w-2 h-2 rounded-full bg-amber-500 absolute -top-0.5 -right-0.5"
               ></span>
@@ -226,28 +187,55 @@
 
     <!-- Baris 1: Segmented Workspace Switcher & Tombol Aksi (Khusus Desktop >= 768px; Mobile menggunakan Bottom Navbar) -->
     <div class="hidden md:flex items-center justify-between gap-2 mb-3">
-      <!-- Segmented Control -->
+      <!-- Segmented Control Dinamis -->
       <nav
         aria-label="Pilih Buku Kas"
-        class="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200/80 flex-1 sm:flex-initial"
+        class="inline-flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 flex-wrap gap-1"
       >
-        {#each workspaceTabs as tab}
+        {#each effectiveWorkspaces as ws (ws.id)}
+          {@const tabTheme = getWorkspaceTheme(ws.id, effectiveWorkspaces)}
+          {@const isSelected = activeWorkspace === ws.id}
           <button
             type="button"
-            onclick={() => onSelectWorkspace(tab.id)}
-            class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-bold rounded-lg transition-all cursor-pointer {activeWorkspace ===
-            tab.id
-              ? tab.activeTabCls
+            onclick={() => onSelectWorkspace(ws.id)}
+            class="inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-bold rounded-lg transition-all cursor-pointer {isSelected
+              ? tabTheme.activeTabCls
               : 'text-slate-600 hover:text-slate-900'}"
           >
             <span
-              class="w-1.5 h-1.5 rounded-full {activeWorkspace === tab.id
-                ? tab.dotCls
+              class="w-1.5 h-1.5 rounded-full {isSelected
+                ? tabTheme.dotCls
                 : 'bg-slate-300'}"
             ></span>
-            <span>{tab.label}</span>
+            <span
+              >{ws.name || getWorkspaceName(ws.id, effectiveWorkspaces)}</span
+            >
           </button>
         {/each}
+
+        {#if onCreateWorkspace}
+          <button
+            type="button"
+            onclick={() => (isAddWsModalOpen = true)}
+            class="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-200/70 rounded-lg transition-colors cursor-pointer"
+            title="Tambah Buku Usaha atau Pekerjaan"
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <path
+                d="M12 5v14M5 12h14"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>Tambah</span>
+          </button>
+        {/if}
       </nav>
 
       <!-- Tombol Dompet, Laporan, Keamanan & Catat (Desktop & Mobile Icon) -->
@@ -258,12 +246,18 @@
             onclick={onOpenSyncModal}
             class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold border rounded-xl shadow-2xs transition-colors cursor-pointer {syncState.isSyncing
               ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-              : syncState.totalPending > 0
-                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                : syncState.isAuthenticated
-                  ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}"
-            title="Pengaturan Sinkronisasi"
+              : !syncState.isAuthenticated
+                ? 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                : syncState.totalPending > 0
+                  ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'}"
+            title={syncState.isSyncing
+              ? "Sedang Sinkronisasi..."
+              : !syncState.isAuthenticated
+                ? "Hubungkan Cloud"
+                : syncState.totalPending > 0
+                  ? `${syncState.totalPending} data pending sinkronisasi`
+                  : "Sinkronisasi Aktif"}
           >
             {#if syncState.isSyncing}
               <svg
@@ -278,11 +272,11 @@
               <span class="hidden xl:inline">Syncing...</span>
             {:else}
               <svg
-                class="w-4 h-4 {syncState.totalPending > 0
-                  ? 'text-amber-600'
-                  : syncState.isAuthenticated
-                    ? 'text-emerald-600'
-                    : 'text-slate-500'}"
+                class="w-4 h-4 {!syncState.isAuthenticated
+                  ? 'text-slate-500'
+                  : syncState.totalPending > 0
+                    ? 'text-amber-600'
+                    : 'text-emerald-600'}"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -294,18 +288,17 @@
                   stroke-linejoin="round"
                 />
               </svg>
-              {#if syncState.totalPending > 0}
+              {#if !syncState.isAuthenticated}
+                <span class="font-bold text-slate-700">Sinkronisasi</span>
+              {:else if syncState.totalPending > 0}
                 <span class="tabular-nums font-bold text-amber-700"
                   >{syncState.totalPending} Pending</span
                 >
-              {:else if syncState.isAuthenticated}
+              {:else}
                 <span class="hidden xl:inline font-bold text-emerald-700"
                   >Tersinkron</span
                 >
-                <span class="xl:hidden">Sync</span>
-              {:else}
-                <span class="hidden xl:inline">Sync Cloud</span>
-                <span class="xl:hidden">Sync</span>
+                <span class="xl:hidden font-bold text-emerald-700">Sync</span>
               {/if}
             {/if}
           </button>
@@ -698,3 +691,9 @@
     </div>
   </div>
 {/if}
+
+<AddWorkspaceModal
+  isOpen={isAddWsModalOpen}
+  {onCreateWorkspace}
+  onClose={() => (isAddWsModalOpen = false)}
+/>

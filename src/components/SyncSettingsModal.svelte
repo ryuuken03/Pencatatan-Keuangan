@@ -2,9 +2,11 @@
   import { onMount, onDestroy } from "svelte";
   import { supabaseAdapter } from "../lib/sync/supabaseAdapter.js";
   import { syncEngine } from "../lib/sync/syncEngine.js";
+  import { getWorkspaceTheme } from "../lib/utils.js";
 
   let {
     isOpen = false,
+    workspaces = [],
     activeWorkspace = "personal",
     onClose,
     onDataSynced,
@@ -69,32 +71,22 @@
     prevOpen = isOpen;
   });
 
-  let headerTheme = $derived.by(() => {
-    if (activeWorkspace === "business") {
-      return {
-        bg: "bg-teal-900",
-        text: "text-white",
-        border: "border-teal-800",
-        badge: "bg-teal-800 text-teal-100",
-        btnPrimary: "bg-teal-900 hover:bg-teal-800 text-white",
-      };
-    }
-    if (activeWorkspace === "kopdes") {
-      return {
-        bg: "bg-emerald-900",
-        text: "text-white",
-        border: "border-emerald-800",
-        badge: "bg-emerald-800 text-emerald-100",
-        btnPrimary: "bg-emerald-900 hover:bg-emerald-800 text-white",
-      };
-    }
-    return {
-      bg: "bg-indigo-950",
-      text: "text-white",
-      border: "border-indigo-900",
-      badge: "bg-indigo-900 text-indigo-100",
-      btnPrimary: "bg-indigo-950 hover:bg-indigo-900 text-white",
-    };
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
+  let wsTheme = $derived(
+    getWorkspaceTheme(activeWorkspace, effectiveWorkspaces)
+  );
+
+  let headerTheme = $derived({
+    bg: wsTheme.heroBg,
+    text: "text-white",
+    border: wsTheme.heroBorder,
+    badge: wsTheme.badgeBg,
+    btnPrimary: wsTheme.primaryBtn,
   });
 
   function formatTime(isoStr) {

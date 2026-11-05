@@ -11,10 +11,18 @@
     SAMPLE_RECEIPTS,
     generateSampleReceiptFile,
   } from "../lib/parsers/receiptParser.js";
-  import { formatIDR, formatDateShort, toDatetimeLocal } from "../lib/utils.js";
+  import {
+    formatIDR,
+    formatDateShort,
+    toDatetimeLocal,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
+  } from "../lib/utils.js";
 
   let {
     isOpen = false,
+    workspaces = [],
     activeWorkspace = "personal",
     allAccounts = [],
     allCategories = [],
@@ -214,12 +222,14 @@
     );
   });
 
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
   let headerBgCls = $derived(
-    formWorkspaceId === "business"
-      ? "bg-teal-900"
-      : formWorkspaceId === "kopdes"
-        ? "bg-emerald-900"
-        : "bg-indigo-950",
+    getWorkspaceTheme(formWorkspaceId, effectiveWorkspaces).heroBg
   );
 
   function toggleItemSelection(itemId) {

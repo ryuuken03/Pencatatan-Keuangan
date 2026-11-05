@@ -1,10 +1,16 @@
 <script>
   import { onDestroy } from "svelte";
   import { parseVoiceInput } from "../lib/parsers/voiceParser.js";
-  import { formatIDR } from "../lib/utils.js";
+  import {
+    formatIDR,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
+  } from "../lib/utils.js";
 
   let {
     isOpen = false,
+    workspaces = [],
     activeWorkspace = "personal",
     allAccounts = [],
     allCategories = [],
@@ -24,8 +30,8 @@
   const EXAMPLE_SENTENCES = [
     "Beli bensin dan makan siang seratus dua puluh lima ribu",
     "Terima omzet penjualan usaha dua setengah juta ke rekening usaha",
-    "Belanja pupuk kopdes satu juta tujuh ratus lima puluh ribu pakai dana talangan",
-    "Terima setoran unit toko kopdes tiga juta lima ratus ribu",
+    "Belanja alat kantor dan dinas satu juta tujuh ratus ribu pakai dana talangan",
+    "Terima honor proyek tiga juta lima ratus ribu",
   ];
 
   // Cek dukungan Web Speech API di browser
@@ -73,12 +79,14 @@
     Object.fromEntries(allCategories.map((c) => [c.id, c])),
   );
 
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
   let headerBgCls = $derived(
-    parsedPreview.workspace_id === "business"
-      ? "bg-teal-900"
-      : parsedPreview.workspace_id === "kopdes"
-        ? "bg-emerald-900"
-        : "bg-indigo-950",
+    getWorkspaceTheme(parsedPreview.workspace_id, effectiveWorkspaces).heroBg
   );
 
   function startListening() {
@@ -103,7 +111,7 @@
         isListening = true;
         interimTranscript = "";
         statusMsg =
-          'Mendengarkan... Silakan bicara (contoh: "Beli ATK kopdes lima puluh ribu")';
+          'Mendengarkan... Silakan bicara (contoh: "Beli ATK dinas lima puluh ribu")';
       };
 
       recognition.onresult = (event) => {
@@ -181,9 +189,7 @@
   }
 
   function getWorkspaceLabel(ws) {
-    if (ws === "business") return "Buku Usaha";
-    if (ws === "kopdes") return "Manager Kopdes";
-    return "Buku Pribadi";
+    return getWorkspaceName(ws, effectiveWorkspaces);
   }
 
   function getTypeLabel(t) {
@@ -446,9 +452,9 @@
             </div>
           </div>
 
-          {#if parsedPreview.workspace_id === "kopdes" && parsedPreview.metadata?.unit_usaha}
+          {#if (getWorkspaceType(parsedPreview.workspace_id, effectiveWorkspaces) === "pekerjaan" || parsedPreview.workspace_id === "kopdes") && parsedPreview.metadata?.unit_usaha}
             <div class="pt-1 text-[11px] text-emerald-900 font-semibold">
-              Unit Kopdes: <strong class="font-extrabold"
+              Divisi / Unit: <strong class="font-extrabold"
                 >{parsedPreview.metadata.unit_usaha}</strong
               >
             </div>

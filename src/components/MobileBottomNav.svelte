@@ -1,13 +1,22 @@
 <script>
-  import { formatIDR } from "../lib/utils.js";
+  import {
+    formatIDR,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType,
+  } from "../lib/utils.js";
+  import AddWorkspaceModal from "./AddWorkspaceModal.svelte";
 
   let {
+    workspaces = [],
     activeWorkspace = "personal",
     onSelectWorkspace,
-    workspaceBalances = { personal: 0, business: 0, kopdes: 0 },
-    workspaceAccountCounts = { personal: 0, business: 0, kopdes: 0 },
+    onCreateWorkspace,
+    workspaceBalances = {},
+    workspaceAccountCounts = {},
     isPinEnabled = false,
     syncPendingCount = 0,
+    isSyncAuthenticated = false,
     isSyncing = false,
     onOpenNewTransaction,
     onOpenReceiptModal,
@@ -21,6 +30,7 @@
 
   // State pop-up sheet aktif: null | 'workspace' | 'catat' | 'pengaturan'
   let activeSheet = $state(null);
+  let isAddWsModalOpen = $state(false);
 
   function toggleSheet(sheetName) {
     activeSheet = activeSheet === sheetName ? null : sheetName;
@@ -30,55 +40,31 @@
     activeSheet = null;
   }
 
-  const workspaces = [
-    {
-      id: "personal",
-      name: "Buku Pribadi",
-      shortName: "Buku Pribadi",
-      desc: "Kas harian, tabungan & rumah tangga",
-      bgActive: "bg-indigo-950 text-white border-indigo-900",
-      dotCls: "bg-indigo-500",
-      accentBorder: "border-l-indigo-700",
-    },
-    {
-      id: "business",
-      name: "Buku Usaha",
-      shortName: "Buku Usaha",
-      desc: "Modal, omzet penjualan & operasional usaha",
-      bgActive: "bg-teal-900 text-white border-teal-800",
-      dotCls: "bg-teal-500",
-      accentBorder: "border-l-teal-700",
-    },
-    {
-      id: "kopdes",
-      name: "Kopdes",
-      shortName: "Kopdes",
-      desc: "Buku kerja Manager Koperasi Desa & unit usaha",
-      bgActive: "bg-emerald-900 text-white border-emerald-800",
-      dotCls: "bg-emerald-500",
-      accentBorder: "border-l-emerald-700",
-    },
-  ];
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }],
+  );
 
   let currentWs = $derived(
-    workspaces.find((w) => w.id === activeWorkspace) || workspaces[0],
+    effectiveWorkspaces.find((w) => w.id === activeWorkspace) ||
+      effectiveWorkspaces[0],
   );
 
-  let primaryBtnCls = $derived(
-    activeWorkspace === "business"
-      ? "bg-teal-900 hover:bg-teal-800 text-white border-teal-800"
-      : activeWorkspace === "kopdes"
-        ? "bg-emerald-900 hover:bg-emerald-800 text-white border-emerald-800"
-        : "bg-indigo-950 hover:bg-indigo-900 text-white border-indigo-900",
+  let currentTheme = $derived(
+    getWorkspaceTheme(activeWorkspace, effectiveWorkspaces),
   );
 
-  let sheetHeaderBg = $derived(
-    activeWorkspace === "business"
-      ? "bg-teal-900"
-      : activeWorkspace === "kopdes"
-        ? "bg-emerald-900"
-        : "bg-indigo-950",
-  );
+  let primaryBtnCls = $derived(currentTheme.primaryBtn);
+  let sheetHeaderBg = $derived(currentTheme.heroBg);
+
+  function getWorkspaceDescription(type) {
+    if (type === "business")
+      return "Modal, omzet penjualan & operasional usaha";
+    if (type === "pekerjaan")
+      return "Gaji, honor proyek, SPJ dinas & operasional kantor";
+    return "Kas harian, tabungan & rumah tangga";
+  }
 </script>
 
 <!-- Backdrop + Pop-up Bottom Sheet Mobile (< 768px) -->
@@ -129,7 +115,9 @@
         </div>
 
         <div class="p-3.5 space-y-2">
-          {#each workspaces as ws (ws.id)}
+          {#each effectiveWorkspaces as ws (ws.id)}
+            {@const wsType = getWorkspaceType(ws.id, effectiveWorkspaces)}
+            {@const tabTheme = getWorkspaceTheme(ws.id, effectiveWorkspaces)}
             {@const isSelected = activeWorkspace === ws.id}
             <button
               type="button"
@@ -138,18 +126,18 @@
                 closeSheet();
               }}
               class="w-full p-3.5 rounded-xl border text-left flex items-center justify-between gap-3 transition-all cursor-pointer {isSelected
-                ? ws.bgActive
-                : `bg-slate-50 hover:bg-slate-100 text-slate-900 border-slate-200 border-l-4 ${ws.accentBorder}`}"
+                ? `${tabTheme.heroBg} text-white ${tabTheme.heroBorder}`
+                : `bg-slate-50 hover:bg-slate-100 text-slate-900 border-slate-200 border-l-4 ${tabTheme.walletAccent}`}"
             >
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
                   <span
                     class="w-2 h-2 rounded-full shrink-0 {isSelected
                       ? 'bg-white'
-                      : ws.dotCls}"
+                      : tabTheme.dotCls}"
                   ></span>
                   <span class="text-xs font-extrabold uppercase tracking-wide">
-                    {ws.name}
+                    {ws.name || getWorkspaceName(ws.id, effectiveWorkspaces)}
                   </span>
                   {#if isSelected}
                     <span
@@ -164,7 +152,7 @@
                     ? 'text-white/80'
                     : 'text-slate-500'}"
                 >
-                  {ws.desc}
+                  {getWorkspaceDescription(wsType)}
                 </p>
               </div>
 
@@ -186,6 +174,32 @@
               </div>
             </button>
           {/each}
+
+          {#if onCreateWorkspace}
+            <button
+              type="button"
+              onclick={() => {
+                closeSheet();
+                isAddWsModalOpen = true;
+              }}
+              class="w-full py-2.5 px-3 rounded-xl border border-dashed border-slate-300 hover:border-slate-400 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer mt-1"
+            >
+              <svg
+                class="w-4 h-4 text-slate-500"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+              >
+                <path
+                  d="M12 5v14M5 12h14"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>Tambah Buku Usaha atau Pekerjaan</span>
+            </button>
+          {/if}
         </div>
 
         <!-- 2. BOTTOM SHEET: CATAT TRANSAKSI (TAMBAH, FOTO, RECORD VOICE) -->
@@ -442,11 +456,23 @@
                   class="text-xs font-extrabold text-slate-900 flex items-center gap-1.5"
                 >
                   <span>Sinkronisasi</span>
-                  {#if syncPendingCount > 0}
+                  {#if !isSyncAuthenticated}
                     <span
-                      class="px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md tabular-nums"
+                      class="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-md"
+                    >
+                      Sinkronisasi
+                    </span>
+                  {:else if syncPendingCount > 0}
+                    <span
+                      class="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md tabular-nums"
                     >
                       {syncPendingCount} pending
+                    </span>
+                  {:else}
+                    <span
+                      class="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-md"
+                    >
+                      Tersinkron
                     </span>
                   {/if}
                 </div>
@@ -733,7 +759,7 @@
           stroke-linejoin="round"
         />
       </svg>
-      {#if syncPendingCount > 0}
+      {#if isSyncAuthenticated && syncPendingCount > 0}
         <span
           class="w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white absolute -top-0.5 -right-1.5"
         ></span>
@@ -750,3 +776,9 @@
     </span>
   </button>
 </nav>
+
+<AddWorkspaceModal
+  isOpen={isAddWsModalOpen}
+  {onCreateWorkspace}
+  onClose={() => (isAddWsModalOpen = false)}
+/>

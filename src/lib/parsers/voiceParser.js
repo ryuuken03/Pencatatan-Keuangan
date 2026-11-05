@@ -279,11 +279,11 @@ export function extractAmountAndCleanText(sentence) {
  */
 function detectWorkspace(lowerText, fallbackWorkspace) {
   if (
-    /\b(kopdes|koperasi|usp|simpan pinjam|unit toko|unit pertanian|unit pupuk|bkm|bkk|bendahara|anggota koperasi|pengurus|rat)\b/.test(
+    /\b(pekerjaan|kerja|kantor|dinas|proyek|kopdes|koperasi|usp|simpan pinjam|unit toko|unit pertanian|unit pupuk|bkm|bkk|bendahara|anggota koperasi|pengurus|rat)\b/.test(
       lowerText
     )
   ) {
-    return 'kopdes';
+    return fallbackWorkspace === 'kopdes' ? 'kopdes' : 'pekerjaan';
   }
   if (
     /\b(usaha|bisnis|dagang|omzet|hpp|kulakan|pelanggan|suplier|supplier|rekening usaha|kas usaha|toko usaha)\b/.test(
@@ -473,7 +473,7 @@ function detectKopdesUnit(lowerText) {
 function formatCleanNote(cleanedText, rawText) {
   let note = cleanedText
     // Hapus instruksi pindah buku atau dana talangan agar catatan fokus ke substansi transaksi
-    .replace(/\b(di buku kopdes|di buku usaha|di buku pribadi|masuk buku kopdes|untuk kopdes|pakai dana talangan|dana talangan|pakai uang pribadi|ditalangi pribadi|reimburse)\b/gi, '')
+    .replace(/\b(di buku pekerjaan|di buku kantor|di buku dinas|di buku kopdes|di buku usaha|di buku pribadi|masuk buku kopdes|masuk buku pekerjaan|untuk pekerjaan|untuk kantor|untuk kopdes|pakai dana talangan|dana talangan|pakai uang pribadi|ditalangi pribadi|reimburse)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .replace(/^[,.\-:\s]+|[,.\-:\s]+$/g, '')
     .trim();
@@ -503,7 +503,10 @@ export function parseVoiceInput(
       category_id: '',
       note: '',
       metadata: {
-        unit_usaha: activeWorkspace === 'kopdes' ? KOPDES_UNITS[0] : '',
+        unit_usaha:
+          activeWorkspace === 'kopdes' || activeWorkspace === 'pekerjaan'
+            ? KOPDES_UNITS[0]
+            : '',
         no_bukti: '',
         pic_pihak: '',
         reimburse_status: 'none',
@@ -529,20 +532,21 @@ export function parseVoiceInput(
 
   // Deteksi Dana Talangan / Reimburse
   const isTalangan =
-    (workspace_id === 'kopdes' || workspace_id === 'business') &&
+    workspace_id !== 'personal' &&
     type === 'expense' &&
     /\b(talangan|reimburse|uang pribadi|dompet pribadi|ditalangi)\b/.test(lower);
 
   const personalAccounts = allAccounts.filter((a) => a.workspace_id === 'personal');
 
-  // Deteksi No Bukti jika disebutkan (contoh "nomor bukti BKK 05")
+  // Deteksi No Bukti jika disebutkan (contoh "nomor bukti BKK 05" atau "nomor bukti SPJ 12")
   let no_bukti = '';
-  const buktiMatch = transcript.match(/\b(?:no\.?\s*bukti|bkm|bkk|nota|inv)\s*[:#-]?\s*([A-Za-z0-9/.-]+)/i);
+  const buktiMatch = transcript.match(/\b(?:no\.?\s*bukti|bkm|bkk|spj|nota|inv)\s*[:#-]?\s*([A-Za-z0-9/.-]+)/i);
   if (buktiMatch) {
     no_bukti = buktiMatch[0].replace(/^no\.?\s*bukti\s*[:#-]?\s*/i, '').trim().toUpperCase();
   }
 
-  const unit_usaha = workspace_id === 'kopdes' ? detectKopdesUnit(lower) : '';
+  const isPekerjaan = workspace_id === 'pekerjaan' || workspace_id === 'kopdes';
+  const unit_usaha = isPekerjaan ? detectKopdesUnit(lower) : '';
 
   return {
     workspace_id,

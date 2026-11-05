@@ -1,9 +1,16 @@
 <script>
-  import { formatIDR, formatDateShort } from "../lib/utils.js";
+  import {
+    formatIDR,
+    formatDateShort,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
+  } from "../lib/utils.js";
   import { KOPDES_UNITS } from "../lib/db.js";
   import { exportTransactionsToXLSX } from "../lib/utils/xlsxEngine.js";
 
   let {
+    workspaces = [],
     activeWorkspace = "personal",
     transactions = [],
     accountsMap = {},
@@ -168,13 +175,31 @@
     closeSwipe();
   });
 
-  let activeFilterBtnCls = $derived(
-    activeWorkspace === "business"
-      ? "bg-teal-900 text-white border-teal-900 shadow-2xs"
-      : activeWorkspace === "kopdes"
-        ? "bg-emerald-900 text-white border-emerald-900 shadow-2xs"
-        : "bg-indigo-950 text-white border-indigo-950 shadow-2xs",
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
   );
+
+  let currentWsType = $derived(
+    getWorkspaceType(activeWorkspace, effectiveWorkspaces)
+  );
+
+  let isPekerjaan = $derived(
+    currentWsType === "pekerjaan" ||
+      activeWorkspace === "kopdes" ||
+      activeWorkspace === "pekerjaan"
+  );
+
+  let isBusiness = $derived(
+    currentWsType === "business" || activeWorkspace === "business"
+  );
+
+  let currentWsTheme = $derived(
+    getWorkspaceTheme(activeWorkspace, effectiveWorkspaces)
+  );
+
+  let activeFilterBtnCls = $derived(currentWsTheme.primaryBtn);
 
   // Daftar akun & kategori yang relevan pada workspace aktif untuk dropdown filter
   let workspaceAccounts = $derived(
@@ -268,7 +293,7 @@
       }
 
       if (
-        activeWorkspace === "kopdes" &&
+        isPekerjaan &&
         filterUnitUsaha !== "all" &&
         (tx.metadata?.unit_usaha || "") !== filterUnitUsaha
       ) {
@@ -549,11 +574,11 @@
           {/each}
         </select>
 
-        <!-- Filter Unit Usaha Khusus Buku Kopdes -->
-        {#if activeWorkspace === "kopdes"}
+        <!-- Filter Unit Usaha Khusus Buku Pekerjaan -->
+        {#if isPekerjaan}
           <select
             bind:value={filterUnitUsaha}
-            aria-label="Filter Unit Usaha Kopdes"
+            aria-label="Filter Unit Usaha atau Kerja"
             class="flex-1 sm:flex-initial px-2.5 py-1.5 text-xs font-semibold bg-white text-slate-700 border border-slate-200/90 rounded-xl shadow-2xs focus:outline-none focus:border-slate-500 cursor-pointer"
           >
             <option value="all">Semua Unit</option>
@@ -1144,10 +1169,10 @@
             <th class="py-3 px-4">Tipe</th>
             <th class="py-3 px-4">Dompet / Akun</th>
             <th class="py-3 px-4">Kategori</th>
-            {#if activeWorkspace === "kopdes"}
-              <th class="py-3 px-4">Unit Usaha</th>
+            {#if isPekerjaan}
+              <th class="py-3 px-4">Unit / Divisi</th>
               <th class="py-3 px-4">No. Bukti & PIC</th>
-            {:else if activeWorkspace === "business"}
+            {:else if isBusiness}
               <th class="py-3 px-4">No. Nota & Pihak</th>
             {/if}
             <th class="py-3 px-4">Catatan & Status Reimburse</th>
@@ -1203,7 +1228,7 @@
                 {catName}
               </td>
 
-              {#if activeWorkspace === "kopdes"}
+              {#if isPekerjaan}
                 <td class="py-3 px-4 text-slate-700 font-medium">
                   {tx.metadata?.unit_usaha || "-"}
                 </td>
@@ -1220,7 +1245,7 @@
                   {/if}
                   {#if !tx.metadata?.no_bukti && !tx.metadata?.pic_pihak}-{/if}
                 </td>
-              {:else if activeWorkspace === "business"}
+              {:else if isBusiness}
                 <td class="py-3 px-4 text-slate-600 tabular-nums">
                   {#if tx.metadata?.no_bukti}
                     <span class="font-bold text-slate-800"
@@ -1350,9 +1375,9 @@
         >
           <tr>
             <td
-              colspan={activeWorkspace === "kopdes"
+              colspan={isPekerjaan
                 ? 7
-                : activeWorkspace === "business"
+                : isBusiness
                   ? 6
                   : 5}
               class="py-3 px-4 text-slate-600"

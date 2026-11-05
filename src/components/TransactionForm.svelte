@@ -5,6 +5,9 @@
     formatNumber,
     formatIDR,
     toDatetimeLocal,
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
   } from "../lib/utils.js";
   import { KOPDES_UNITS } from "../lib/db.js";
   import { compressReceiptImage } from "../lib/utils/imageCompressor.js";
@@ -12,6 +15,7 @@
   let {
     isOpen = false,
     initialData = null,
+    workspaces = [],
     activeWorkspace = "personal",
     allAccounts = [],
     allCategories = [],
@@ -107,20 +111,27 @@
     }
   }
 
-  let headerBgCls = $derived(
-    workspace_id === "business"
-      ? "bg-teal-900"
-      : workspace_id === "kopdes"
-        ? "bg-emerald-900"
-        : "bg-indigo-950",
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
   );
 
-  let activePillCls = $derived(
-    workspace_id === "business"
-      ? "bg-teal-900 text-white border-teal-900 shadow-2xs"
-      : workspace_id === "kopdes"
-        ? "bg-emerald-900 text-white border-emerald-900 shadow-2xs"
-        : "bg-indigo-950 text-white border-indigo-950 shadow-2xs",
+  let currentWsTheme = $derived(
+    getWorkspaceTheme(workspace_id, effectiveWorkspaces)
+  );
+
+  let headerBgCls = $derived(currentWsTheme.heroBg);
+  let activePillCls = $derived(currentWsTheme.primaryBtn);
+
+  let isPekerjaanWorkspace = $derived(
+    getWorkspaceType(workspace_id, effectiveWorkspaces) === "pekerjaan" ||
+      workspace_id === "kopdes" ||
+      workspace_id === "pekerjaan"
+  );
+
+  let isNonPersonal = $derived(
+    workspace_id !== "personal"
   );
 
   // Filter akun & kategori sesuai workspace yang dipilih di form
@@ -422,7 +433,7 @@
     }
 
     const isReimburseActive =
-      (workspace_id === "kopdes" || workspace_id === "business") &&
+      isNonPersonal &&
       type === "expense" &&
       useReimburse;
 
@@ -458,11 +469,8 @@
       note,
       items: cleanedItems,
       metadata: {
-        no_bukti:
-          workspace_id === "kopdes" || workspace_id === "business"
-            ? no_bukti.trim()
-            : "",
-        unit_usaha: workspace_id === "kopdes" ? unit_usaha : "",
+        no_bukti: isNonPersonal ? no_bukti.trim() : "",
+        unit_usaha: isPekerjaanWorkspace ? unit_usaha : "",
         pic_pihak: pic_pihak.trim(),
         reimburse_status: finalReimburseStatus,
         reimburse_from_account_id: isReimburseActive
@@ -653,18 +661,19 @@
                     Buku Kas
                   </span>
                   <div
-                    class="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200"
+                    class="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200"
                   >
-                    {#each [{ id: "personal", label: "Pribadi" }, { id: "business", label: "Usaha" }, { id: "kopdes", label: "Kopdes" }] as ws}
+                    {#each effectiveWorkspaces as ws (ws.id)}
+                      {@const wsTheme = getWorkspaceTheme(ws.id, effectiveWorkspaces)}
                       <button
                         type="button"
                         onclick={() => handleWorkspaceChange(ws.id)}
-                        class="py-1 text-xs font-bold rounded-lg transition-colors cursor-pointer {workspace_id ===
+                        class="flex-1 min-w-[70px] py-1 px-2 text-xs font-bold rounded-lg transition-colors cursor-pointer truncate {workspace_id ===
                         ws.id
-                          ? activePillCls
+                          ? wsTheme.activeTabCls
                           : 'text-slate-600 hover:text-slate-900'}"
                       >
-                        {ws.label}
+                        {ws.name || getWorkspaceName(ws.id, effectiveWorkspaces)}
                       </button>
                     {/each}
                   </div>
@@ -1213,7 +1222,7 @@
               </div>
 
               <!-- 9. Opsi Dana Talangan / Reimburse -->
-              {#if (workspace_id === "kopdes" || workspace_id === "business") && type === "expense"}
+              {#if isNonPersonal && type === "expense"}
                 <div
                   class="p-3 rounded-2xl border {useReimburse
                     ? 'bg-amber-50/90 border-amber-300'
@@ -1296,20 +1305,20 @@
                 </div>
               {/if}
 
-              <!-- 10. Atribut Khusus Kopdes / Usaha -->
-              {#if workspace_id === "kopdes"}
+              <!-- 10. Atribut Khusus Pekerjaan / Usaha -->
+              {#if isPekerjaanWorkspace}
                 <div
                   class="p-3 bg-emerald-50/40 border border-emerald-200/80 rounded-2xl space-y-2"
                 >
                   <div
                     class="text-[11px] font-extrabold uppercase tracking-wider text-emerald-900"
                   >
-                    Atribut Manajerial Kopdes
+                    Atribut Pekerjaan & Dinas
                   </div>
                   <div>
                     <span
                       class="block text-[10px] font-bold text-slate-600 mb-1"
-                      >Unit Usaha</span
+                      >Divisi / Unit Kerja</span
                     >
                     <div class="grid grid-cols-2 gap-1">
                       {#each KOPDES_UNITS as unit}
@@ -1333,12 +1342,12 @@
                         for="tx-nobukti"
                         class="block text-[10px] font-bold text-slate-600 mb-1"
                       >
-                        No. Bukti (BKM/BKK)
+                        No. Bukti / SPJ
                       </label>
                       <input
                         id="tx-nobukti"
                         type="text"
-                        placeholder="BKK-2026/11/001"
+                        placeholder="SPJ-2026/11/001"
                         bind:value={no_bukti}
                         class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-800"
                       />
@@ -1353,14 +1362,14 @@
                       <input
                         id="tx-pic"
                         type="text"
-                        placeholder="Nama staf/vendor"
+                        placeholder="Nama rekan/vendor"
                         bind:value={pic_pihak}
                         class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-800"
                       />
                     </div>
                   </div>
                 </div>
-              {:else if workspace_id === "business"}
+              {:else if isNonPersonal}
                 <div
                   class="p-3 bg-slate-50 border border-slate-200/90 rounded-2xl grid grid-cols-2 gap-2"
                 >

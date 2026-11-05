@@ -1,9 +1,14 @@
 <script>
   import { onDestroy } from "svelte";
-  import { formatIDR, formatDateShort } from "../lib/utils.js";
+  import {
+    formatIDR,
+    formatDateShort,
+    getWorkspaceTheme
+  } from "../lib/utils.js";
 
   let {
     isOpen = false,
+    workspaces = [],
     transaction = null,
     accountsMap = {},
     categoriesMap = {},
@@ -35,12 +40,14 @@
     if (blobUrl) URL.revokeObjectURL(blobUrl);
   });
 
+  let effectiveWorkspaces = $derived(
+    workspaces && workspaces.length > 0
+      ? workspaces
+      : [{ id: "personal", name: "Buku Pribadi", type: "personal" }]
+  );
+
   let headerBgCls = $derived(
-    transaction?.workspace_id === "business"
-      ? "bg-teal-900"
-      : transaction?.workspace_id === "kopdes"
-        ? "bg-emerald-900"
-        : "bg-indigo-950",
+    getWorkspaceTheme(transaction?.workspace_id, effectiveWorkspaces).heroBg
   );
 
   let txItems = $derived(

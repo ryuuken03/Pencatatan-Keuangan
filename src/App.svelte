@@ -10,8 +10,16 @@
     saveAccount,
     softDeleteAccount,
     saveCategory,
-    softDeleteCategory
+    softDeleteCategory,
+    createWorkspace,
+    updateWorkspace,
+    deleteWorkspace
   } from './lib/db.js';
+  import {
+    getWorkspaceName,
+    getWorkspaceTheme,
+    getWorkspaceType
+  } from './lib/utils.js';
   import WorkspaceSwitcher from './components/WorkspaceSwitcher.svelte';
   import TransactionList from './components/TransactionList.svelte';
   import TransactionForm from './components/TransactionForm.svelte';
@@ -31,6 +39,7 @@
     setSessionUnlocked
   } from './lib/utils/cryptoBackup.js';
 
+  let allWorkspaces = $state([]);
   let activeWorkspace = $state('personal');
   let allAccounts = $state([]);
   let allCategories = $state([]);
@@ -63,9 +72,15 @@
 
   async function refreshData() {
     const data = await loadAppData();
+    allWorkspaces = data.workspaces || [];
     allAccounts = data.accounts;
     allCategories = data.categories;
     allTransactions = data.transactions;
+
+    // Pastikan activeWorkspace valid di antara daftar workspace aktif
+    if (allWorkspaces.length > 0 && !allWorkspaces.some((w) => w.id === activeWorkspace)) {
+      activeWorkspace = allWorkspaces[0].id;
+    }
   }
 
   onMount(async () => {
@@ -106,21 +121,26 @@
 
   // Total Saldo & Jumlah Dompet per Buku Kas (untuk Mobile WorkspaceSwitcher Sheet)
   let workspaceBalances = $derived.by(() => {
-    const totals = { personal: 0, business: 0, kopdes: 0 };
+    const totals = {};
+    for (const ws of allWorkspaces) {
+      totals[ws.id] = 0;
+    }
     for (const acc of allAccounts) {
-      if (totals[acc.workspace_id] !== undefined) {
-        totals[acc.workspace_id] += accountBalances[acc.id] ?? 0;
+      if (totals[acc.workspace_id] === undefined) {
+        totals[acc.workspace_id] = 0;
       }
+      totals[acc.workspace_id] += accountBalances[acc.id] ?? 0;
     }
     return totals;
   });
 
   let workspaceAccountCounts = $derived.by(() => {
-    const counts = { personal: 0, business: 0, kopdes: 0 };
+    const counts = {};
+    for (const ws of allWorkspaces) {
+      counts[ws.id] = 0;
+    }
     for (const acc of allAccounts) {
-      if (counts[acc.workspace_id] !== undefined) {
-        counts[acc.workspace_id] += 1;
-      }
+      counts[acc.workspace_id] = (counts[acc.workspace_id] || 0) + 1;
     }
     return counts;
   });
@@ -190,29 +210,24 @@
     };
   });
 
+  let activeWsTheme = $derived(
+    getWorkspaceTheme(activeWorkspace, allWorkspaces)
+  );
+
   let mobileBtnCls = $derived(
-    activeWorkspace === 'business'
-      ? 'bg-teal-900 hover:bg-teal-800'
-      : activeWorkspace === 'kopdes'
-        ? 'bg-emerald-900 hover:bg-emerald-800'
-        : 'bg-indigo-950 hover:bg-indigo-900'
+    activeWsTheme.primaryBtn
   );
 
   let pageTitle = $derived(
-    activeWorkspace === 'business'
-      ? 'Buku Usaha — Buku Kas Multi-Workspace'
-      : activeWorkspace === 'kopdes'
-        ? 'Manager Kopdes — Buku Kas Multi-Workspace'
-        : 'Buku Pribadi — Buku Kas Multi-Workspace'
+    `${getWorkspaceName(activeWorkspace, allWorkspaces)} — Buku Kas`
   );
 
-  let themeColorHex = $derived(
-    activeWorkspace === 'business'
-      ? '#134e4a'
-      : activeWorkspace === 'kopdes'
-        ? '#064e3b'
-        : '#1e1b4b'
-  );
+  let themeColorHex = $derived.by(() => {
+    const type = getWorkspaceType(activeWorkspace, allWorkspaces);
+    if (type === 'business') return '#134e4a';
+    if (type === 'pekerjaan') return '#064e3b';
+    return '#1e1b4b';
+  });
 
   $effect(() => {
     const meta = document.getElementById('theme-color-meta');
@@ -220,6 +235,26 @@
       meta.setAttribute('content', themeColorHex);
     }
   });
+
+  // Handlers CRUD Buku Kas (Workspace)
+  async function handleCreateWorkspace({ name, type }) {
+    const newWs = await createWorkspace({ name, type });
+    await refreshData();
+    activeWorkspace = newWs.id;
+    return newWs;
+  }
+
+  async function handleUpdateWorkspace(id, { name }) {
+    await updateWorkspace(id, { name });
+    await refreshData();
+  }
+
+  async function handleDeleteWorkspace(id) {
+    if (!confirm('Hapus buku kas ini beserta semua dompet dan transaksi di dalamnya?')) return;
+    await deleteWorkspace(id);
+    activeWorkspace = 'personal';
+    await refreshData();
+  }
 
   // Handlers CRUD Transaksi
   function openNewTransaction() {
@@ -306,8 +341,12 @@
     {/if}
 
     <WorkspaceSwitcher
+      workspaces={allWorkspaces}
       {activeWorkspace}
       onSelectWorkspace={(ws) => (activeWorkspace = ws)}
+      onCreateWorkspace={handleCreateWorkspace}
+      onUpdateWorkspace={handleUpdateWorkspace}
+      onDeleteWorkspace={handleDeleteWorkspace}
       accounts={activeAccounts}
       {accountBalances}
       summary={workspaceSummary}
@@ -327,6 +366,7 @@
 
     <main class="flex-1">
       <TransactionList
+        workspaces={allWorkspaces}
         {activeWorkspace}
         transactions={activeTransactions}
         {accountsMap}
@@ -341,12 +381,15 @@
 
     <!-- Bottom Navigation Bar Khusus Mobile (< 768px) -->
     <MobileBottomNav
+      workspaces={allWorkspaces}
       {activeWorkspace}
       onSelectWorkspace={(ws) => (activeWorkspace = ws)}
+      onCreateWorkspace={handleCreateWorkspace}
       {workspaceBalances}
       {workspaceAccountCounts}
       {isPinEnabled}
       syncPendingCount={syncState.totalPending}
+      isSyncAuthenticated={syncState.isAuthenticated}
       isSyncing={syncState.isSyncing}
       onOpenNewTransaction={openNewTransaction}
       onOpenReceiptModal={() => (isReceiptModalOpen = true)}
@@ -368,6 +411,7 @@
     <TransactionForm
       isOpen={isTxModalOpen}
       initialData={editingTx}
+      workspaces={allWorkspaces}
       {activeWorkspace}
       {allAccounts}
       {allCategories}
@@ -390,6 +434,7 @@
     <!-- Modal Input Suara Pintar (Web Speech API + NLP Parser Bahasa Indonesia) -->
     <VoiceInputModal
       isOpen={isVoiceModalOpen}
+      workspaces={allWorkspaces}
       {activeWorkspace}
       {allAccounts}
       {allCategories}
@@ -401,6 +446,7 @@
     <!-- Modal Scan Foto Struk / Nota (Kompresi WebP < 80KB + OCR Regex Parser) -->
     <ReceiptScannerModal
       isOpen={isReceiptModalOpen}
+      workspaces={allWorkspaces}
       {activeWorkspace}
       {allAccounts}
       {allCategories}
@@ -414,6 +460,7 @@
     <ReceiptPreviewModal
       isOpen={Boolean(previewReceiptTx)}
       transaction={previewReceiptTx}
+      workspaces={allWorkspaces}
       {accountsMap}
       {categoriesMap}
       onEdit={openEditTransaction}
@@ -426,6 +473,7 @@
     <ManageWalletCategoryModal
       isOpen={isManageModalOpen}
       initialTab={manageModalInitialTab}
+      workspaces={allWorkspaces}
       {activeWorkspace}
       accounts={activeAccounts}
       categories={activeCategories}
@@ -440,6 +488,7 @@
     <!-- Modal Rekap Laporan, Export & Import Excel (.xlsx) -->
     <ReportExportModal
       isOpen={isReportModalOpen}
+      workspaces={allWorkspaces}
       {activeWorkspace}
       transactions={activeTransactions}
       {allTransactions}
@@ -454,6 +503,7 @@
     <!-- Modal Backup JSON Terenkripsi AES-GCM 256-Bit & PIN Lock 6 Digit -->
     <SecurityBackupModal
       isOpen={isSecurityModalOpen}
+      workspaces={allWorkspaces}
       {activeWorkspace}
       onDataRestored={refreshData}
       onLockAppNow={() => {
@@ -470,6 +520,7 @@
     {#if isSyncModalOpen}
       <SyncSettingsModal
         isOpen={isSyncModalOpen}
+        workspaces={allWorkspaces}
         {activeWorkspace}
         onDataSynced={refreshData}
         onClose={() => (isSyncModalOpen = false)}
